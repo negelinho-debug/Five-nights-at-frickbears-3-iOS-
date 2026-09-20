@@ -1,4 +1,4 @@
-name: FNAFR 3 iOS - v9 FORCE DIRECT GAME PATH
+name: FNAFR 3 iOS - v10 EXACT DIRECT GAME PATH FIX
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: Build FNAFR 3 native-style iOS app v9
+    name: Build FNAFR 3 native-style iOS app v10
     runs-on: macos-latest
     timeout-minutes: 90
 
@@ -168,62 +168,37 @@ jobs:
           s = cmake.read_text(encoding="utf-8")
 
           # ------------------------------------------------------------
-          # v9: iOS direct-boot fix
+          # v10 direct-boot fix:
+          # current Butterscotch CLI entry point is src/cli/main.c:
           #
-          # The runtime log proved the app was NOT crashing. Butterscotch
-          # was simply starting with argc == 1 and printing its Usage text,
-          # because iOS does not launch the app with a game path argument.
+          #   int main(int argc, char* argv[])
           #
-          # Patch Butterscotch's real main() so that an ordinary icon tap
-          # becomes equivalent to:
-          #
-          #   FNAFR3 assets/game.droid
-          #
-          # The bootstrap already chdirs into FNAFR3.app before main().
+          # iOS launches the .app with no game-path argument. Instead of
+          # searching every source file with a regex (v9), patch the exact
+          # known CLI entry point and inject assets/game.droid as argv[1].
           # ------------------------------------------------------------
-          main_pattern = re.compile(
-              r'(\\bint\\s+main\\s*\\('
-              r'\\s*int\\s+argc\\s*,'
-              r'\\s*(?:const\\s+)?char\\s*'
-              r'(?:\\*\\s*\\*\\s*argv|\\*\\s*argv\\s*\\[\\s*\\])'
-              r'\\s*\\)\\s*\\{)'
-          )
+          cli_main = root / "src" / "cli" / "main.c"
 
-          main_candidates = []
+          if not cli_main.exists():
+              raise SystemExit("Missing current Butterscotch src/cli/main.c")
 
-          for source in root.rglob("*.c"):
-              try:
-                  source_text = source.read_text(
-                      encoding="utf-8",
-                      errors="ignore"
-                  )
-              except Exception:
-                  continue
+          cli = cli_main.read_text(encoding="utf-8")
 
-              if main_pattern.search(source_text):
-                  main_candidates.append((source, source_text))
+          main_marker = """int main(int argc, char* argv[]) {
+              setbuf(stderr, NULL);
+          """
 
-          if len(main_candidates) != 1:
-              Path("output/v9-main-candidates.txt").write_text(
-                  "\\n".join(str(p) for p, _ in main_candidates),
-                  encoding="utf-8"
-              )
-              raise SystemExit(
-                  f"Expected one Butterscotch main(), found {len(main_candidates)}"
-              )
+          direct_boot_main = """int main(int argc, char* argv[]) {
+              setbuf(stderr, NULL);
 
-          main_source, main_text = main_candidates[0]
-
-          injected = r"""
               /*
-               * FNAFR 3 iOS direct boot.
-               * iOS launches the executable without a CLI game path.
-               * Force the bundled GameMaker archive as argv[1].
+               * FNAFR 3 iOS direct boot:
+               * tapping the app icon gives no CLI game argument.
+               * Force the bundled GameMaker archive.
                */
-              static char *fnafr3_ios_argv[3];
+              char* fnafr3_ios_argv[3];
 
-              if (argc < 2)
-              {
+              if (argc < 2) {
                   fnafr3_ios_argv[0] = argv[0];
                   fnafr3_ios_argv[1] = "assets/game.droid";
                   fnafr3_ios_argv[2] = NULL;
@@ -231,26 +206,26 @@ jobs:
                   argv = fnafr3_ios_argv;
                   argc = 2;
               }
-
           """
 
-          main_text, patched_main_count = main_pattern.subn(
-              lambda m: m.group(1) + injected,
-              main_text,
-              count=1
-          )
+          if main_marker not in cli:
+              Path("output/v10-cli-main-current.txt").write_text(
+                  cli,
+                  encoding="utf-8"
+              )
+              raise SystemExit(
+                  "Current src/cli/main.c entry point changed; exact marker not found"
+              )
 
-          if patched_main_count != 1:
-              raise SystemExit("Failed to inject the direct game path into main()")
+          cli = cli.replace(main_marker, direct_boot_main, 1)
+          cli_main.write_text(cli, encoding="utf-8")
 
-          main_source.write_text(main_text, encoding="utf-8")
-
-          Path("output/v9-main-source.txt").write_text(
-              str(main_source) + "\\n",
+          Path("output/v10-cli-main-patched.txt").write_text(
+              cli,
               encoding="utf-8"
           )
 
-          print("DIRECT_BOOT_MAIN_PATCH=", main_source)
+          print("DIRECT_BOOT_PATCHED_FILE=", cli_main)
           print("DIRECT_BOOT_GAME_PATH=assets/game.droid")
 
           s, n = re.subn(
@@ -596,7 +571,7 @@ jobs:
 
           cp -R work/apk/assets "$APP/assets"
 
-          # v9 direct boot requires this exact path inside the app bundle.
+          # v10 main() forces this exact path.
           test -f "$APP/assets/game.droid"
           ls -lh "$APP/assets/game.droid"
 
@@ -691,17 +666,17 @@ jobs:
           rm -f "$APP/embedded.mobileprovision"
 
           /usr/bin/zip -qry \
-            FNAFR-3-Mobile-iOS-v9-DIRECT-GAME-UNSIGNED.ipa \
+            FNAFR-3-Mobile-iOS-v10-DIRECT-GAME-UNSIGNED.ipa \
             Payload
 
-          ls -lh FNAFR-3-Mobile-iOS-v9-DIRECT-GAME-UNSIGNED.ipa
+          ls -lh FNAFR-3-Mobile-iOS-v10-DIRECT-GAME-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         if: steps.native_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-iOS-v9-DIRECT-GAME-UNSIGNED
-          path: FNAFR-3-Mobile-iOS-v9-DIRECT-GAME-UNSIGNED.ipa
+          name: FNAFR-3-Mobile-iOS-v10-DIRECT-GAME-UNSIGNED
+          path: FNAFR-3-Mobile-iOS-v10-DIRECT-GAME-UNSIGNED.ipa
           if-no-files-found: error
           compression-level: 0
 
@@ -709,7 +684,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-iOS-v9-Diagnostics
+          name: FNAFR-3-Mobile-iOS-v10-Diagnostics
           path: |
             output
           if-no-files-found: warn
@@ -722,10 +697,10 @@ jobs:
           echo "Native build outcome: ${{ steps.native_build.outcome }}"
 
           if [ "${{ steps.native_build.outcome }}" != "success" ]; then
-            echo "v9 stopped before IPA creation. Check Diagnostics for the exact next error."
+            echo "v10 stopped before IPA creation. Check Diagnostics for the exact next error."
             echo "Download the Diagnostics artifact and use error-summary.txt/build.log for v2."
             exit 1
           fi
 
-          test -f FNAFR-3-Mobile-iOS-v9-DIRECT-GAME-UNSIGNED.ipa
-          echo "SUCCESS: FNAFR-3-Mobile-iOS-v9-DIRECT-GAME-UNSIGNED.ipa created."
+          test -f FNAFR-3-Mobile-iOS-v10-DIRECT-GAME-UNSIGNED.ipa
+          echo "SUCCESS: FNAFR-3-Mobile-iOS-v10-DIRECT-GAME-UNSIGNED.ipa created."
