@@ -1,4 +1,4 @@
-name: FNAFR 3 iOS - v6 MODS FOLDER + DIRECT BOOT
+name: FNAFR 3 iOS - v7 MINIAUDIO OBJC FIX
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: Build FNAFR 3 native-style iOS app v6
+    name: Build FNAFR 3 native-style iOS app v7
     runs-on: macos-latest
     timeout-minutes: 90
 
@@ -154,7 +154,7 @@ jobs:
           cd work/Butterscotch
           git rev-parse HEAD | tee ../../output/butterscotch-commit.txt
 
-      - name: Patch Butterscotch for iPhone without Objective-C
+      - name: Patch Butterscotch for iPhone - miniaudio Objective-C fix
         shell: bash
         run: |
           set -euo pipefail
@@ -218,6 +218,28 @@ jobs:
                   encoding="utf-8"
               )
               raise SystemExit("Could not locate current SDL2 backend block")
+
+          # On iOS, miniaudio includes AVFoundation/Foundation headers.
+          # The implementation file must therefore be compiled as Objective-C,
+          # while the rest of Butterscotch can stay plain C.
+          audio_marker = 'file(GLOB AUDIO_SOURCES src/audio/miniaudio/*.c)'
+          audio_replacement = '''file(GLOB AUDIO_SOURCES src/audio/miniaudio/*.c)
+              if(BUTTERSCOTCH_IOS)
+                  enable_language(OBJC)
+                  foreach(_audio_src IN LISTS AUDIO_SOURCES)
+                      if(_audio_src MATCHES "ma_audio_system\\.c$")
+                          set_source_files_properties(
+                              "${_audio_src}"
+                              PROPERTIES LANGUAGE OBJC
+                          )
+                      endif()
+                  endforeach()
+              endif()'''
+
+          if audio_marker not in s:
+              raise SystemExit("Could not find miniaudio source block")
+
+          s = s.replace(audio_marker, audio_replacement, 1)
 
           anchor = 'if(BACKEND STREQUAL "glfw3")'
           pos = s.find(anchor)
@@ -329,8 +351,8 @@ jobs:
           if "add_library(glad STATIC vendor/glad/src/glad.c)" not in patched:
               raise SystemExit("GLAD block disappeared unexpectedly")
 
-          Path("output/v5-cmake-patched.txt").write_text(patched, encoding="utf-8")
-          print("v5 patch applied: pure-C bootstrap + original GLAD preserved.")
+          Path("output/v7-cmake-patched.txt").write_text(patched, encoding="utf-8")
+          print("v7 patch applied: miniaudio Objective-C + direct boot + GLAD preserved.")
           PY2
 
       - name: Configure iOS arm64 build
@@ -388,9 +410,9 @@ jobs:
         run: |
           set +e
           grep -E \
-            'error:|fatal error:|Undefined symbols|ld: |CMake Error|FAILED:' \
+            'error:|fatal error:|Undefined symbols|ld: |CMake Error|FAILED:|ma_audio_system\\.(c|o)|-x objective-c' \
             output/build.log \
-            | tail -600 \
+            | tail -800 \
             > output/error-summary.txt || true
 
           cat output/error-summary.txt || true
@@ -527,17 +549,17 @@ jobs:
           rm -f "$APP/embedded.mobileprovision"
 
           /usr/bin/zip -qry \
-            FNAFR-3-Mobile-iOS-v6-MODS-DIRECT-BOOT-UNSIGNED.ipa \
+            FNAFR-3-Mobile-iOS-v7-MODS-DIRECT-BOOT-UNSIGNED.ipa \
             Payload
 
-          ls -lh FNAFR-3-Mobile-iOS-v6-MODS-DIRECT-BOOT-UNSIGNED.ipa
+          ls -lh FNAFR-3-Mobile-iOS-v7-MODS-DIRECT-BOOT-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         if: steps.native_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-iOS-v6-MODS-DIRECT-BOOT-UNSIGNED
-          path: FNAFR-3-Mobile-iOS-v6-MODS-DIRECT-BOOT-UNSIGNED.ipa
+          name: FNAFR-3-Mobile-iOS-v7-MODS-DIRECT-BOOT-UNSIGNED
+          path: FNAFR-3-Mobile-iOS-v7-MODS-DIRECT-BOOT-UNSIGNED.ipa
           if-no-files-found: error
           compression-level: 0
 
@@ -545,7 +567,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-iOS-v6-Diagnostics
+          name: FNAFR-3-Mobile-iOS-v7-Diagnostics
           path: |
             output
           if-no-files-found: warn
@@ -558,10 +580,10 @@ jobs:
           echo "Native build outcome: ${{ steps.native_build.outcome }}"
 
           if [ "${{ steps.native_build.outcome }}" != "success" ]; then
-            echo "v6 stopped before IPA creation. Check Diagnostics for the exact next error."
+            echo "v7 stopped before IPA creation. Check Diagnostics for the exact next error."
             echo "Download the Diagnostics artifact and use error-summary.txt/build.log for v2."
             exit 1
           fi
 
-          test -f FNAFR-3-Mobile-iOS-v6-MODS-DIRECT-BOOT-UNSIGNED.ipa
-          echo "SUCCESS: FNAFR-3-Mobile-iOS-v6-MODS-DIRECT-BOOT-UNSIGNED.ipa created."
+          test -f FNAFR-3-Mobile-iOS-v7-MODS-DIRECT-BOOT-UNSIGNED.ipa
+          echo "SUCCESS: FNAFR-3-Mobile-iOS-v7-MODS-DIRECT-BOOT-UNSIGNED.ipa created."
