@@ -1,0 +1,496 @@
+name: FNAFR 3 iOS - v2 NATIVE APP DIRECT BOOT
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build FNAFR 3 native-style iOS app
+    runs-on: macos-latest
+    timeout-minutes: 90
+
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install cmake ninja || true
+          rm -rf work output Payload
+          mkdir -p work output
+
+      - name: Download FNAFR 3 APK from GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAGS="$(
+            gh release list \
+              --limit 20 \
+              --json tagName \
+              --jq '.[].tagName'
+          )"
+
+          APK=""
+
+          while IFS= read -r TAG; do
+            [ -z "$TAG" ] && continue
+
+            DIR="work/releases/$(echo "$TAG" | tr '/ ' '__')"
+            mkdir -p "$DIR"
+
+            gh release download "$TAG" \
+              --dir "$DIR" \
+              --pattern "*.apk" \
+              2>/dev/null || true
+
+            CANDIDATE="$(
+              find "$DIR" -type f -iname '*.apk' \
+                | grep -Ei 'frickbear|fnafr' \
+                | sed -n '1p' || true
+            )"
+
+            if [ -n "$CANDIDATE" ]; then
+              APK="$CANDIDATE"
+              break
+            fi
+          done <<< "$TAGS"
+
+          if [ -z "$APK" ]; then
+            echo "No specifically named FNAFR/Frickbear APK found; using largest APK in releases."
+            APK="$(
+              find work/releases -type f -iname '*.apk' -print0 \
+                | xargs -0 ls -S \
+                | sed -n '1p'
+            )"
+          fi
+
+          if [ -z "$APK" ] || [ ! -f "$APK" ]; then
+            echo "ERROR: APK not found."
+            echo "Upload frickbear-s-3-mobile-1.2-hotfix-patch1.apk to a GitHub Release."
+            exit 1
+          fi
+
+          cp "$APK" work/FNAFR3.apk
+          ls -lh work/FNAFR3.apk
+
+      - name: Extract GameMaker game data
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p work/apk
+          unzip -q work/FNAFR3.apk -d work/apk
+
+          test -f work/apk/assets/game.droid
+
+          echo "===== GAME DATA ====="
+          ls -lh work/apk/assets/game.droid
+          file work/apk/assets/game.droid
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("work/apk/assets/game.droid")
+          b = p.read_bytes()[:256]
+          print("header:", b[:32])
+          if not b.startswith(b"FORM"):
+              raise SystemExit("game.droid is not a GameMaker FORM archive")
+          if b"GEN8" not in b:
+              raise SystemExit("GEN8 chunk not found near header")
+          print("GameMaker VM data detected: FORM/GEN8")
+          PY
+
+          echo "===== AUDIO GROUPS ====="
+          find work/apk/assets -maxdepth 1 -type f -name 'audiogroup*.dat' -print | sort
+
+          echo "===== TEXTURE GROUPS ====="
+          find work/apk/assets -maxdepth 2 -type f -name '*.yytex' | wc -l
+
+      - name: Use the real FNAFR 3 APK launcher icon
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # This APK contains the Frickbear launcher artwork at res/Xy.png.
+          # Use that exact artwork instead of picking a random square resource.
+          ICON="work/apk/res/Xy.png"
+
+          if [ ! -f "$ICON" ]; then
+            # Same launcher artwork also exists at a lower density as res/7v.png.
+            ICON="work/apk/res/7v.png"
+          fi
+
+          if [ ! -f "$ICON" ]; then
+            echo "ERROR: original FNAFR 3 launcher icon was not found."
+            exit 1
+          fi
+
+          echo "$ICON" > output/icon-path.txt
+          file "$ICON"
+          ls -lh "$ICON"
+
+      - name: Clone Butterscotch runner and SDL2
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git clone --depth 1 --recurse-submodules \
+            https://github.com/ButterscotchRunner/Butterscotch.git \
+            work/Butterscotch
+
+          git clone --depth 1 --branch release-2.30.12 \
+            https://github.com/libsdl-org/SDL.git \
+            work/Butterscotch/vendor/SDL
+
+          cd work/Butterscotch
+          git rev-parse HEAD | tee ../../output/butterscotch-commit.txt
+
+      - name: Patch Butterscotch for iPhone build
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path("work/Butterscotch")
+          cmake = root / "CMakeLists.txt"
+          s = cmake.read_text()
+
+          s = s.replace(
+              "project(butterscotch C)",
+              "project(butterscotch C OBJC)\n"
+              "if(CMAKE_SYSTEM_NAME STREQUAL \"iOS\")\n"
+              "  set(BUTTERSCOTCH_IOS ON)\n"
+              "endif()"
+          )
+
+          old_sdl = '''elseif(BACKEND STREQUAL "sdl2")
+          add_compile_definitions(USE_SDL2)
+          find_package(PkgConfig REQUIRED)
+          pkg_check_modules(SDL2 REQUIRED sdl2)
+          target_include_directories(butterscotch PRIVATE ${SDL2_INCLUDE_DIRS})
+          target_link_directories(butterscotch PRIVATE ${SDL2_LIBRARY_DIRS})
+          set(BACKEND_LIBRARIES ${SDL2_LIBRARIES})'''
+
+          new_sdl = '''elseif(BACKEND STREQUAL "sdl2")
+          add_compile_definitions(USE_SDL2)
+          if(BUTTERSCOTCH_IOS)
+            set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+            set(SDL_STATIC ON CACHE BOOL "" FORCE)
+            set(SDL_TEST OFF CACHE BOOL "" FORCE)
+            add_subdirectory(vendor/SDL EXCLUDE_FROM_ALL)
+            target_include_directories(butterscotch PRIVATE ${CMAKE_SOURCE_DIR}/vendor/SDL/include)
+            set(BACKEND_LIBRARIES SDL2::SDL2-static SDL2::SDL2main)
+          else()
+            find_package(PkgConfig REQUIRED)
+            pkg_check_modules(SDL2 REQUIRED sdl2)
+            target_include_directories(butterscotch PRIVATE ${SDL2_INCLUDE_DIRS})
+            target_link_directories(butterscotch PRIVATE ${SDL2_LIBRARY_DIRS})
+            set(BACKEND_LIBRARIES ${SDL2_LIBRARIES})
+          endif()'''
+
+          if old_sdl not in s:
+              raise SystemExit("Could not find SDL2 block in Butterscotch CMakeLists.txt")
+          s = s.replace(old_sdl, new_sdl)
+
+          old_glad = '''if(NOT PLATFORM STREQUAL "vita" AND NOT PLATFORM STREQUAL "switch")
+          # GLAD
+          add_library(glad STATIC vendor/glad/src/glad.c)
+          target_include_directories(glad PUBLIC vendor/glad/include)
+          target_compile_options(glad PRIVATE -Wno-unused-but-set-variable)
+          set(PLATFORM_LIBRARIES ${PLATFORM_LIBRARIES} glad)
+          endif()'''
+
+          new_glad = '''if(BUTTERSCOTCH_IOS)
+          add_compile_definitions(ENABLE_GLES)
+          set(PLATFORM_LIBRARIES
+            ${PLATFORM_LIBRARIES}
+            "-framework OpenGLES"
+            "-framework UIKit"
+            "-framework Foundation"
+            "-framework QuartzCore"
+            "-framework CoreGraphics"
+            "-framework GameController"
+            "-framework AudioToolbox"
+            "-framework AVFoundation"
+            "-framework CoreAudio"
+          )
+          target_sources(butterscotch PRIVATE ${CMAKE_SOURCE_DIR}/ios_bootstrap.m)
+          elseif(NOT PLATFORM STREQUAL "vita" AND NOT PLATFORM STREQUAL "switch")
+          # GLAD
+          add_library(glad STATIC vendor/glad/src/glad.c)
+          target_include_directories(glad PUBLIC vendor/glad/include)
+          target_compile_options(glad PRIVATE -Wno-unused-but-set-variable)
+          set(PLATFORM_LIBRARIES ${PLATFORM_LIBRARIES} glad)
+          endif()'''
+
+          if old_glad not in s:
+              raise SystemExit("Could not find GLAD block in Butterscotch CMakeLists.txt")
+          s = s.replace(old_glad, new_glad)
+
+          s = s.replace(
+              '''if (NOT WIN32)
+          set(AUDIO_LIBRARIES pthread)
+          endif()''',
+              '''if (NOT WIN32 AND NOT BUTTERSCOTCH_IOS)
+          set(AUDIO_LIBRARIES pthread)
+          endif()'''
+          )
+
+          cmake.write_text(s)
+
+          (root / "ios_bootstrap.m").write_text(r'''
+          #import <Foundation/Foundation.h>
+          #include <unistd.h>
+
+          __attribute__((constructor))
+          static void FNAFR3_DirectBoot(void)
+          {
+              @autoreleasepool
+              {
+                  NSString *path = [[NSBundle mainBundle] resourcePath];
+                  if (path != nil)
+                  {
+                      chdir([path fileSystemRepresentation]);
+                  }
+              }
+          }
+          ''')
+
+          print("Butterscotch iOS patch applied.")
+          PY
+
+      - name: Configure iOS arm64 build
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cmake \
+            -S work/Butterscotch \
+            -B work/build-ios \
+            -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO \
+            -DPLATFORM=cli \
+            -DBACKEND=sdl2 \
+            -DAUDIO_BACKEND=miniaudio \
+            -DENABLE_LEGACY_GL=OFF \
+            -DENABLE_MODERN_GL=ON \
+            -DENABLE_ASAN=OFF \
+            -DENABLE_VM_GML_PROFILER=OFF \
+            -DENABLE_VM_TRACING=OFF \
+            -DENABLE_VM_OPCODE_PROFILER=OFF \
+            -DENABLE_VM_STUB_LOGS=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            2>&1 | tee output/cmake-configure.log
+
+      - name: Build Butterscotch for iPhone
+        id: native_build
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -o pipefail
+
+          cmake \
+            --build work/build-ios \
+            --config Release \
+            --target butterscotch \
+            -- -sdk iphoneos \
+               CODE_SIGNING_ALLOWED=NO \
+               CODE_SIGNING_REQUIRED=NO \
+               DEVELOPMENT_TEAM= \
+            2>&1 | tee output/build.log
+
+          RC=${PIPESTATUS[0]}
+          echo "$RC" > output/build-exit-code.txt
+          exit "$RC"
+
+      - name: Extract build errors
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          grep -E \
+            'error:|fatal error:|Undefined symbols|ld: |CMake Error|FAILED:' \
+            output/build.log \
+            | tail -600 \
+            > output/error-summary.txt || true
+
+          cat output/error-summary.txt || true
+
+      - name: Package FNAFR 3 unsigned IPA
+        if: steps.native_build.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BIN="$(
+            find work/build-ios \
+              -type f \
+              -name 'butterscotch' \
+              -perm -111 \
+              | grep -E 'Release|iphoneos' \
+              | sed -n '1p'
+          )"
+
+          if [ -z "$BIN" ]; then
+            BIN="$(
+              find work/build-ios \
+                -type f \
+                -name 'butterscotch' \
+                -perm -111 \
+                | sed -n '1p'
+            )"
+          fi
+
+          if [ -z "$BIN" ] || [ ! -f "$BIN" ]; then
+            echo "ERROR: iOS runner binary not found."
+            exit 1
+          fi
+
+          echo "RUNNER=$BIN"
+          file "$BIN"
+
+          APP="$PWD/Payload/FNAFR3.app"
+          mkdir -p "$APP"
+
+          cp "$BIN" "$APP/FNAFR3"
+          chmod +x "$APP/FNAFR3"
+
+          cp -R work/apk/assets "$APP/assets"
+
+          find "$APP/assets" -maxdepth 1 -type f \
+            \( -iname '*.dll' -o -iname '*.exe' \) \
+            -delete || true
+
+          cat > "$APP/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDisplayName</key>
+            <string>Frickbear's 3</string>
+            <key>CFBundleExecutable</key>
+            <string>FNAFR3</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.frickbears3.ios.port</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundleName</key>
+            <string>Frickbears3</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.2</string>
+            <key>CFBundleVersion</key>
+            <string>2</string>
+            <key>LSRequiresIPhoneOS</key>
+            <true/>
+            <key>MinimumOSVersion</key>
+            <string>15.0</string>
+            <key>UIApplicationSupportsIndirectInputEvents</key>
+            <true/>
+            <key>UIRequiresFullScreen</key>
+            <true/>
+
+            <key>UISupportedInterfaceOrientations</key>
+            <array>
+              <string>UIInterfaceOrientationLandscapeLeft</string>
+              <string>UIInterfaceOrientationLandscapeRight</string>
+            </array>
+
+            <key>CFBundleIcons</key>
+            <dict>
+              <key>CFBundlePrimaryIcon</key>
+              <dict>
+                <key>CFBundleIconFiles</key>
+                <array>
+                  <string>Icon-60</string>
+                </array>
+                <key>CFBundleIconName</key>
+                <string>AppIcon</string>
+              </dict>
+            </dict>
+
+            <key>CFBundleIcons~ipad</key>
+            <dict>
+              <key>CFBundlePrimaryIcon</key>
+              <dict>
+                <key>CFBundleIconFiles</key>
+                <array>
+                  <string>Icon-60</string>
+                  <string>Icon-76</string>
+                  <string>Icon-83.5</string>
+                </array>
+                <key>CFBundleIconName</key>
+                <string>AppIcon</string>
+              </dict>
+            </dict>
+          </dict>
+          </plist>
+          PLIST
+
+          ICON="$(cat output/icon-path.txt)"
+
+          # Native iPhone/iPad icon sizes generated from the exact APK launcher art.
+          sips -z 120 120 "$ICON" --out "$APP/Icon-60@2x.png" >/dev/null
+          sips -z 180 180 "$ICON" --out "$APP/Icon-60@3x.png" >/dev/null
+          sips -z 152 152 "$ICON" --out "$APP/Icon-76@2x.png" >/dev/null
+          sips -z 167 167 "$ICON" --out "$APP/Icon-83.5@2x.png" >/dev/null
+
+          rm -rf "$APP/_CodeSignature"
+          rm -f "$APP/embedded.mobileprovision"
+
+          /usr/bin/zip -qry \
+            FNAFR-3-Mobile-iOS-v2-DIRECT-BOOT-UNSIGNED.ipa \
+            Payload
+
+          ls -lh FNAFR-3-Mobile-iOS-v2-DIRECT-BOOT-UNSIGNED.ipa
+
+      - name: Upload unsigned IPA
+        if: steps.native_build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FNAFR-3-Mobile-iOS-v2-DIRECT-BOOT-UNSIGNED
+          path: FNAFR-3-Mobile-iOS-v2-DIRECT-BOOT-UNSIGNED.ipa
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: FNAFR-3-Mobile-iOS-v2-Diagnostics
+          path: |
+            output
+          if-no-files-found: warn
+          compression-level: 6
+
+      - name: Final status
+        if: always()
+        shell: bash
+        run: |
+          echo "Native build outcome: ${{ steps.native_build.outcome }}"
+
+          if [ "${{ steps.native_build.outcome }}" != "success" ]; then
+            echo "v2 stopped while compiling the direct-boot iOS runner."
+            echo "Download the Diagnostics artifact and use error-summary.txt/build.log for v2."
+            exit 1
+          fi
+
+          test -f FNAFR-3-Mobile-iOS-v2-DIRECT-BOOT-UNSIGNED.ipa
+          echo "SUCCESS: FNAFR-3-Mobile-iOS-v2-DIRECT-BOOT-UNSIGNED.ipa created."
