@@ -1,4 +1,4 @@
-name: FNAFR 3 iOS - v8 RUNTIME CRASH LOG
+name: FNAFR 3 iOS - v9 FORCE DIRECT GAME PATH
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: Build FNAFR 3 native-style iOS app v8
+    name: Build FNAFR 3 native-style iOS app v9
     runs-on: macos-latest
     timeout-minutes: 90
 
@@ -166,6 +166,92 @@ jobs:
           root = Path("work/Butterscotch")
           cmake = root / "CMakeLists.txt"
           s = cmake.read_text(encoding="utf-8")
+
+          # ------------------------------------------------------------
+          # v9: iOS direct-boot fix
+          #
+          # The runtime log proved the app was NOT crashing. Butterscotch
+          # was simply starting with argc == 1 and printing its Usage text,
+          # because iOS does not launch the app with a game path argument.
+          #
+          # Patch Butterscotch's real main() so that an ordinary icon tap
+          # becomes equivalent to:
+          #
+          #   FNAFR3 assets/game.droid
+          #
+          # The bootstrap already chdirs into FNAFR3.app before main().
+          # ------------------------------------------------------------
+          main_pattern = re.compile(
+              r'(\\bint\\s+main\\s*\\('
+              r'\\s*int\\s+argc\\s*,'
+              r'\\s*(?:const\\s+)?char\\s*'
+              r'(?:\\*\\s*\\*\\s*argv|\\*\\s*argv\\s*\\[\\s*\\])'
+              r'\\s*\\)\\s*\\{)'
+          )
+
+          main_candidates = []
+
+          for source in root.rglob("*.c"):
+              try:
+                  source_text = source.read_text(
+                      encoding="utf-8",
+                      errors="ignore"
+                  )
+              except Exception:
+                  continue
+
+              if main_pattern.search(source_text):
+                  main_candidates.append((source, source_text))
+
+          if len(main_candidates) != 1:
+              Path("output/v9-main-candidates.txt").write_text(
+                  "\\n".join(str(p) for p, _ in main_candidates),
+                  encoding="utf-8"
+              )
+              raise SystemExit(
+                  f"Expected one Butterscotch main(), found {len(main_candidates)}"
+              )
+
+          main_source, main_text = main_candidates[0]
+
+          injected = r"""
+              /*
+               * FNAFR 3 iOS direct boot.
+               * iOS launches the executable without a CLI game path.
+               * Force the bundled GameMaker archive as argv[1].
+               */
+              static char *fnafr3_ios_argv[3];
+
+              if (argc < 2)
+              {
+                  fnafr3_ios_argv[0] = argv[0];
+                  fnafr3_ios_argv[1] = "assets/game.droid";
+                  fnafr3_ios_argv[2] = NULL;
+
+                  argv = fnafr3_ios_argv;
+                  argc = 2;
+              }
+
+          """
+
+          main_text, patched_main_count = main_pattern.subn(
+              lambda m: m.group(1) + injected,
+              main_text,
+              count=1
+          )
+
+          if patched_main_count != 1:
+              raise SystemExit("Failed to inject the direct game path into main()")
+
+          main_source.write_text(main_text, encoding="utf-8")
+
+          Path("output/v9-main-source.txt").write_text(
+              str(main_source) + "\\n",
+              encoding="utf-8"
+          )
+
+          print("DIRECT_BOOT_MAIN_PATCH=", main_source)
+          print("DIRECT_BOOT_GAME_PATH=assets/game.droid")
 
           s, n = re.subn(
               r'project\s*\(\s*butterscotch\s+C(?:\s+OBJC)?\s*\)',
@@ -428,7 +514,7 @@ jobs:
             -DENABLE_MODERN_GL=ON \
             -DENABLE_ASAN=OFF \
             -DENABLE_VM_GML_PROFILER=OFF \
-            -DENABLE_VM_TRACING=ON \
+            -DENABLE_VM_TRACING=OFF \
             -DENABLE_VM_OPCODE_PROFILER=OFF \
             -DENABLE_VM_STUB_LOGS=ON \
             -DENABLE_VM_EXCEPTIONS_LOGS=ON \
@@ -509,6 +595,10 @@ jobs:
           chmod +x "$APP/FNAFR3"
 
           cp -R work/apk/assets "$APP/assets"
+
+          # v9 direct boot requires this exact path inside the app bundle.
+          test -f "$APP/assets/game.droid"
+          ls -lh "$APP/assets/game.droid"
 
           find "$APP/assets" -maxdepth 1 -type f \
             \( -iname '*.dll' -o -iname '*.exe' \) \
@@ -601,17 +691,17 @@ jobs:
           rm -f "$APP/embedded.mobileprovision"
 
           /usr/bin/zip -qry \
-            FNAFR-3-Mobile-iOS-v8-RUNTIME-LOG-UNSIGNED.ipa \
+            FNAFR-3-Mobile-iOS-v9-DIRECT-GAME-UNSIGNED.ipa \
             Payload
 
-          ls -lh FNAFR-3-Mobile-iOS-v8-RUNTIME-LOG-UNSIGNED.ipa
+          ls -lh FNAFR-3-Mobile-iOS-v9-DIRECT-GAME-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         if: steps.native_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-iOS-v8-RUNTIME-LOG-UNSIGNED
-          path: FNAFR-3-Mobile-iOS-v8-RUNTIME-LOG-UNSIGNED.ipa
+          name: FNAFR-3-Mobile-iOS-v9-DIRECT-GAME-UNSIGNED
+          path: FNAFR-3-Mobile-iOS-v9-DIRECT-GAME-UNSIGNED.ipa
           if-no-files-found: error
           compression-level: 0
 
@@ -619,7 +709,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-iOS-v8-Diagnostics
+          name: FNAFR-3-Mobile-iOS-v9-Diagnostics
           path: |
             output
           if-no-files-found: warn
@@ -632,10 +722,10 @@ jobs:
           echo "Native build outcome: ${{ steps.native_build.outcome }}"
 
           if [ "${{ steps.native_build.outcome }}" != "success" ]; then
-            echo "v8 stopped before IPA creation. Check Diagnostics for the exact next error."
+            echo "v9 stopped before IPA creation. Check Diagnostics for the exact next error."
             echo "Download the Diagnostics artifact and use error-summary.txt/build.log for v2."
             exit 1
           fi
 
-          test -f FNAFR-3-Mobile-iOS-v8-RUNTIME-LOG-UNSIGNED.ipa
-          echo "SUCCESS: FNAFR-3-Mobile-iOS-v8-RUNTIME-LOG-UNSIGNED.ipa created."
+          test -f FNAFR-3-Mobile-iOS-v9-DIRECT-GAME-UNSIGNED.ipa
+          echo "SUCCESS: FNAFR-3-Mobile-iOS-v9-DIRECT-GAME-UNSIGNED.ipa created."
