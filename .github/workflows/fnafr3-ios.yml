@@ -1,4 +1,4 @@
-name: FNAFR 3 iOS - v7 MINIAUDIO OBJC FIX
+name: FNAFR 3 iOS - v8 RUNTIME CRASH LOG
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: Build FNAFR 3 native-style iOS app v7
+    name: Build FNAFR 3 native-style iOS app v8
     runs-on: macos-latest
     timeout-minutes: 90
 
@@ -274,7 +274,9 @@ jobs:
 
           (root / "ios_bootstrap.c").write_text(r'''
           #include <mach-o/dyld.h>
+          #include <fcntl.h>
           #include <limits.h>
+          #include <signal.h>
           #include <stdint.h>
           #include <stdio.h>
           #include <stdlib.h>
@@ -282,10 +284,41 @@ jobs:
           #include <sys/stat.h>
           #include <unistd.h>
 
+          static char g_log_path[PATH_MAX];
+          static char g_crash_path[PATH_MAX];
+
           static void make_dir_if_needed(const char *path)
           {
               if (path != NULL && path[0] != '\0')
                   mkdir(path, 0755);
+          }
+
+          static void write_crash_signal(int sig)
+          {
+              int fd = open(
+                  g_crash_path,
+                  O_WRONLY | O_CREAT | O_APPEND,
+                  0644
+              );
+
+              if (fd >= 0)
+              {
+                  char buf[64];
+                  int n = snprintf(
+                      buf,
+                      sizeof(buf),
+                      "signal=%d\n",
+                      sig
+                  );
+
+                  if (n > 0)
+                      write(fd, buf, (size_t)n);
+
+                  close(fd);
+              }
+
+              signal(sig, SIG_DFL);
+              raise(sig);
           }
 
           __attribute__((constructor))
@@ -301,9 +334,18 @@ jobs:
 
                   snprintf(documents, sizeof(documents), "%s/Documents", home);
                   snprintf(mods, sizeof(mods), "%s/Documents/Mods", home);
+                  snprintf(g_log_path, sizeof(g_log_path), "%s/Documents/FNAFR3-runtime.log", home);
+                  snprintf(g_crash_path, sizeof(g_crash_path), "%s/Documents/FNAFR3-crash.txt", home);
 
                   make_dir_if_needed(documents);
                   make_dir_if_needed(mods);
+
+                  freopen(g_log_path, "a", stdout);
+                  freopen(g_log_path, "a", stderr);
+                  setvbuf(stdout, NULL, _IONBF, 0);
+                  setvbuf(stderr, NULL, _IONBF, 0);
+
+                  fprintf(stderr, "\n=== FNAFR3 iOS launch ===\n");
 
                   snprintf(readme, sizeof(readme), "%s/Documents/Mods/README.txt", home);
 
@@ -327,6 +369,12 @@ jobs:
                   }
 
                   setenv("FNAFR3_MODS_DIR", mods, 1);
+
+                  signal(SIGABRT, write_crash_signal);
+                  signal(SIGSEGV, write_crash_signal);
+                  signal(SIGBUS,  write_crash_signal);
+                  signal(SIGILL,  write_crash_signal);
+                  signal(SIGFPE,  write_crash_signal);
               }
 
               setenv("SDL_RENDER_VSYNC", "1", 1);
@@ -338,12 +386,15 @@ jobs:
                   return;
 
               path[sizeof(path) - 1] = '\0';
+
               char *slash = strrchr(path, '/');
               if (slash != NULL)
               {
                   *slash = '\0';
                   chdir(path);
               }
+
+              fprintf(stderr, "bundle_cwd=%s\n", path);
           }
           ''', encoding="utf-8")
 
@@ -377,9 +428,10 @@ jobs:
             -DENABLE_MODERN_GL=ON \
             -DENABLE_ASAN=OFF \
             -DENABLE_VM_GML_PROFILER=OFF \
-            -DENABLE_VM_TRACING=OFF \
+            -DENABLE_VM_TRACING=ON \
             -DENABLE_VM_OPCODE_PROFILER=OFF \
             -DENABLE_VM_STUB_LOGS=ON \
+            -DENABLE_VM_EXCEPTIONS_LOGS=ON \
             -DCMAKE_BUILD_TYPE=Release \
             2>&1 | tee output/cmake-configure.log
 
@@ -549,17 +601,17 @@ jobs:
           rm -f "$APP/embedded.mobileprovision"
 
           /usr/bin/zip -qry \
-            FNAFR-3-Mobile-iOS-v7-MODS-DIRECT-BOOT-UNSIGNED.ipa \
+            FNAFR-3-Mobile-iOS-v8-RUNTIME-LOG-UNSIGNED.ipa \
             Payload
 
-          ls -lh FNAFR-3-Mobile-iOS-v7-MODS-DIRECT-BOOT-UNSIGNED.ipa
+          ls -lh FNAFR-3-Mobile-iOS-v8-RUNTIME-LOG-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         if: steps.native_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-iOS-v7-MODS-DIRECT-BOOT-UNSIGNED
-          path: FNAFR-3-Mobile-iOS-v7-MODS-DIRECT-BOOT-UNSIGNED.ipa
+          name: FNAFR-3-Mobile-iOS-v8-RUNTIME-LOG-UNSIGNED
+          path: FNAFR-3-Mobile-iOS-v8-RUNTIME-LOG-UNSIGNED.ipa
           if-no-files-found: error
           compression-level: 0
 
@@ -567,7 +619,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-iOS-v7-Diagnostics
+          name: FNAFR-3-Mobile-iOS-v8-Diagnostics
           path: |
             output
           if-no-files-found: warn
@@ -580,10 +632,10 @@ jobs:
           echo "Native build outcome: ${{ steps.native_build.outcome }}"
 
           if [ "${{ steps.native_build.outcome }}" != "success" ]; then
-            echo "v7 stopped before IPA creation. Check Diagnostics for the exact next error."
+            echo "v8 stopped before IPA creation. Check Diagnostics for the exact next error."
             echo "Download the Diagnostics artifact and use error-summary.txt/build.log for v2."
             exit 1
           fi
 
-          test -f FNAFR-3-Mobile-iOS-v7-MODS-DIRECT-BOOT-UNSIGNED.ipa
-          echo "SUCCESS: FNAFR-3-Mobile-iOS-v7-MODS-DIRECT-BOOT-UNSIGNED.ipa created."
+          test -f FNAFR-3-Mobile-iOS-v8-RUNTIME-LOG-UNSIGNED.ipa
+          echo "SUCCESS: FNAFR-3-Mobile-iOS-v8-RUNTIME-LOG-UNSIGNED.ipa created."
