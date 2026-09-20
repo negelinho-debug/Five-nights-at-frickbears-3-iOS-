@@ -1,4 +1,4 @@
-name: FNAFR 3 iOS - v2 NATIVE APP DIRECT BOOT
+name: FNAFR 3 iOS - v3 APK EXTRACT FIX
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: Build FNAFR 3 native-style iOS app
+    name: Build FNAFR 3 native-style iOS app v3
     runs-on: macos-latest
     timeout-minutes: 90
 
@@ -87,8 +87,9 @@ jobs:
         run: |
           set -euo pipefail
 
+          rm -rf work/apk
           mkdir -p work/apk
-          unzip -q work/FNAFR3.apk -d work/apk
+          unzip -oq work/FNAFR3.apk -d work/apk
 
           test -f work/apk/assets/game.droid
 
@@ -456,17 +457,17 @@ jobs:
           rm -f "$APP/embedded.mobileprovision"
 
           /usr/bin/zip -qry \
-            FNAFR-3-Mobile-iOS-v2-DIRECT-BOOT-UNSIGNED.ipa \
+            FNAFR-3-Mobile-iOS-v3-DIRECT-BOOT-UNSIGNED.ipa \
             Payload
 
-          ls -lh FNAFR-3-Mobile-iOS-v2-DIRECT-BOOT-UNSIGNED.ipa
+          ls -lh FNAFR-3-Mobile-iOS-v3-DIRECT-BOOT-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         if: steps.native_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-iOS-v2-DIRECT-BOOT-UNSIGNED
-          path: FNAFR-3-Mobile-iOS-v2-DIRECT-BOOT-UNSIGNED.ipa
+          name: FNAFR-3-Mobile-iOS-v3-DIRECT-BOOT-UNSIGNED
+          path: FNAFR-3-Mobile-iOS-v3-DIRECT-BOOT-UNSIGNED.ipa
           if-no-files-found: error
           compression-level: 0
 
@@ -474,7 +475,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-iOS-v2-Diagnostics
+          name: FNAFR-3-Mobile-iOS-v3-Diagnostics
           path: |
             output
           if-no-files-found: warn
@@ -487,10 +488,10 @@ jobs:
           echo "Native build outcome: ${{ steps.native_build.outcome }}"
 
           if [ "${{ steps.native_build.outcome }}" != "success" ]; then
-            echo "v2 stopped while compiling the direct-boot iOS runner."
+            echo "v3 stopped before IPA creation. Check Diagnostics for the exact next error."
             echo "Download the Diagnostics artifact and use error-summary.txt/build.log for v2."
             exit 1
           fi
 
-          test -f FNAFR-3-Mobile-iOS-v2-DIRECT-BOOT-UNSIGNED.ipa
-          echo "SUCCESS: FNAFR-3-Mobile-iOS-v2-DIRECT-BOOT-UNSIGNED.ipa created."
+          test -f FNAFR-3-Mobile-iOS-v3-DIRECT-BOOT-UNSIGNED.ipa
+          echo "SUCCESS: FNAFR-3-Mobile-iOS-v3-DIRECT-BOOT-UNSIGNED.ipa created."
