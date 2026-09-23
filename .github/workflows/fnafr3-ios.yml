@@ -1,4 +1,4 @@
-name: FNAFR 3 v11 - test game.droid BEFORE another IPA
+name: FNAFR 3 v12 - locate actual GameMaker parser crash
 
 on:
   workflow_dispatch:
@@ -7,134 +7,118 @@ permissions:
   contents: read
 
 jobs:
-  compatibility:
-    name: Check FNAFR 3 game data with newest Butterscotch (Linux)
+  trace:
+    name: Build debug Butterscotch and locate BinaryReader failure
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 40
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - name: Get Frickbear APK from THIS repository's Releases
+      - name: Get FNAFR 3 APK from THIS repo Releases
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p input report game
+          mkdir -p input game report
           APK=""
           while IFS= read -r TAG; do
             [ -n "$TAG" ] || continue
             DIR="input/$(echo "$TAG" | tr '/ ' '__')"
             mkdir -p "$DIR"
-            gh release download "$TAG" --pattern '*.apk' --dir "$DIR" 2>/dev/null || true
+            gh release download "$TAG" -p '*.apk' -D "$DIR" 2>/dev/null || true
             APK="$(find "$DIR" -type f -iname '*.apk' | grep -Ei 'frickbear|fnafr' | head -1 || true)"
             [ -n "$APK" ] && break
           done < <(gh release list --limit 30 --json tagName --jq '.[].tagName')
-          [ -n "$APK" ] || APK="$(find input -type f -iname '*.apk' | head -1 || true)"
           [ -n "$APK" ] && [ -s "$APK" ] || {
-            echo 'Add the Frickbear Android APK to a Release of this repository.' >&2
+            echo 'ERROR: Original Frickbear APK not found in this repo Releases.' >&2
             exit 1
           }
-          echo "APK=$APK" | tee report/source.txt
           unzip -p "$APK" assets/game.droid > game/game.droid
           test -s game/game.droid
-          ls -lh game/game.droid | tee report/game-size.txt
-      - name: Check entire GameMaker FORM and 33 chunk offsets
-        shell: bash
-        run: |
-          set -euo pipefail
+          echo "source=$APK" > report/source.txt
+          sha256sum game/game.droid | tee report/game-droid-sha256.txt
           python3 - <<'PY'
           from pathlib import Path
           import struct
-          b=Path("game/game.droid").read_bytes()
-          assert b[:4]==b"FORM", "Not a GameMaker FORM game archive"
-          declared=struct.unpack_from("<I",b,4)[0]+8
-          assert declared==len(b), f"FORM size mismatch: {declared} vs {len(b)}"
-          off=8; lines=[]
-          while off<len(b):
-              assert off+8<=len(b), "Truncated chunk header"
-              name=b[off:off+4].decode("ascii","replace")
-              size=struct.unpack_from("<I",b,off+4)[0]
-              end=off+8+size
-              assert end<=len(b), f"Truncated {name}: end={end} file={len(b)}"
-              lines.append(f"{name:4s} offset={off:8d} length={size:8d}")
-              off=end
-          gen8 = next((x for x in lines if x.startswith("GEN8")), None)
-          assert gen8, "GEN8 chunk missing"
-          # GameMaker GEN8 begins with 1-byte debug flag then 1-byte WAD version.
-          wad=b[17]
-          print(f"FORM byte length: {len(b)}")
-          print(f"GAME WAD VERSION: {wad}")
-          print(f"CHUNKS: {len(lines)}")
-          print("\n".join(lines))
-          Path("report/form-check.txt").write_text(
-            f"File bytes: {len(b)}\nWAD version: {wad}\n"
-            f"Chunks: {len(lines)}\n\n"+"\n".join(lines)+"\n"
-          )
+          b=Path('game/game.droid').read_bytes()
+          assert b[:4] == b'FORM'
+          assert len(b) == 8 + struct.unpack_from('<I', b, 4)[0]
+          assert b[17] == 17, f'Expected WAD17, got {b[17]}'
+          print('Valid outer FORM, GameMaker WAD17, bytes:',len(b))
           PY
-      - name: Fetch the newest official Butterscotch Linux build
+
+      - name: Install debugger and C build dependencies
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb libgl1 libopenal1 libsdl2-2.0-0 file
-          mkdir -p runner
-          curl -fLsS --retry 3 --retry-delay 4 \
-            'https://nightly.link/ButterscotchRunner/Butterscotch/workflows/build/main/Butterscotch-Linux-amd64.zip' \
-            -o runner/Butterscotch-Linux-amd64.zip
-          unzip -oq runner/Butterscotch-Linux-amd64.zip -d runner/unpacked
-          find runner/unpacked -maxdepth 4 -type f -print | tee report/runner-files.txt
-          RUNNER="$(python3 - <<'PYRUN'
-          from pathlib import Path
-          candidates=[]
-          for p in Path("runner/unpacked").rglob("*"):
-              if p.is_file():
-                  try:
-                      if p.open("rb").read(4)==b"\x7fELF":
-                          candidates.append(p)
-                  except OSError:
-                      pass
-          for p in sorted(candidates,key=lambda p:(0 if p.name.lower()=="butterscotch" else 1,len(str(p)))):
-              print(p)
-              break
-          PYRUN
-          )"
-          [ -n "$RUNNER" ] || { echo 'Runner executable not found'; exit 1; }
-          chmod +x "$RUNNER"
-          file "$RUNNER" | tee report/runner-file-type.txt
-          ldd "$RUNNER" 2>&1 | tee report/runner-libraries.txt || true
-          echo "$RUNNER" > runner/path.txt
-      - name: Test actual FNAFR 3 parsing -- no iOS build
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            git cmake ninja-build build-essential pkg-config gdb xvfb \
+            libsdl2-dev libgl1-mesa-dev libx11-dev libasound2-dev \
+            libpulse-dev libsamplerate0-dev file
+
+      - name: Clone and compile DEBUG Butterscotch from source
         shell: bash
         run: |
-          set +e
-          RUNNER="$PWD/$(cat runner/path.txt)"
-          cd game
-          echo "===== RUNNING NEWEST BUTTERSCOTCH ====="
-          echo "If it fails with BinaryReader here, another IPA will fail too."
-          timeout 150s xvfb-run -a "$RUNNER" --print-rooms "$PWD/game.droid" \
-            > ../report/butterscotch-output.txt 2>&1
-          EXIT_CODE=$?
-          cd ..
-          echo "$EXIT_CODE" > report/runner-exit-code.txt
-          sed -n '1,140p' report/butterscotch-output.txt || true
-          echo "EXIT_CODE=$EXIT_CODE"
-          if grep -Eqi 'BinaryReader.*buffer read error|cannot execute|unsupported' \
-              report/butterscotch-output.txt; then
-            echo 'ERROR: Runner cannot load this game. iOS rebuild will not fix this.' \
-              | tee report/CONCLUSION.txt
-          elif [ "$EXIT_CODE" -eq 0 ]; then
-            echo 'Runner parsed the game on Linux. Now compare its commit to the old iOS build.' \
+          set -euo pipefail
+          git clone --depth 1 --recurse-submodules \
+            https://github.com/ButterscotchRunner/Butterscotch.git src/Butterscotch
+          git -C src/Butterscotch rev-parse HEAD | tee report/butterscotch-commit.txt
+          # Real debug symbols, ASAN off: GDB must stop at the precise bad read.
+          cmake -S src/Butterscotch -B debug-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_FLAGS_DEBUG='-O0 -g3 -fno-omit-frame-pointer' \
+            -DPLATFORM=cli \
+            -DBACKEND=sdl2 \
+            -DAUDIO_BACKEND=miniaudio \
+            -DENABLE_WAD17=ON \
+            -DENABLE_ASAN=OFF \
+            -DENABLE_VM_STUB_LOGS=ON \
+            2>&1 | tee report/cmake-configure.log
+          cmake --build debug-build -j 4 2>&1 | tee report/debug-build.log
+          test -x debug-build/butterscotch
+          file debug-build/butterscotch | tee report/debug-binary.txt
+
+      - name: GDB backtrace at FIRST invalid BinaryReader access
+        shell: bash
+        run: |
+          set -uo pipefail
+          ulimit -c 0 || true
+          # The v11 test showed an abort during --print-rooms. Running the
+          # DEBUG source build with GDB should reveal the parser function.
+          xvfb-run -a timeout 180s gdb -q -batch \
+            -ex 'set pagination off' \
+            -ex 'set print pretty on' \
+            -ex 'set print elements 40' \
+            -ex 'handle SIGABRT stop print nopass' \
+            -ex 'handle SIGSEGV stop print nopass' \
+            -ex 'run' \
+            -ex 'bt full 40' \
+            -ex 'info registers' \
+            -ex 'thread apply all bt 15' \
+            --args "$PWD/debug-build/butterscotch" \
+            --print-rooms "$PWD/game/game.droid" \
+            > report/gdb-full.txt 2>&1
+          RC=$?
+          echo "$RC" > report/gdb-exit.txt
+          grep -E '^#([0-9]+|\s)|BinaryReader|buffer read error|signal SIG' \
+            report/gdb-full.txt | head -130 > report/KEY-STACK-FRAMES.txt || true
+          if grep -q 'BinaryReader: buffer read error' report/gdb-full.txt; then
+            echo 'REPRODUCED: precise source-code stack in gdb-full.txt' \
               | tee report/CONCLUSION.txt
           else
-            echo 'Runner returned a nonzero exit. Inspect logs before another IPA.' \
+            echo 'Check GDB full output: error may be build-specific or happen earlier.' \
               | tee report/CONCLUSION.txt
           fi
-          cat report/CONCLUSION.txt >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload FNAFR v11 compatibility report (send ZIP to ChatGPT)
+          cat report/KEY-STACK-FRAMES.txt || true
+          # This job records data; a positive run is NOT a fixed runner or IPA.
+          exit 0
+
+      - name: Upload report (send this ZIP to ChatGPT)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-v11-Compatibility-Report
+          name: FNAFR-3-v12-Actual-Parser-Backtrace
           path: report/
           if-no-files-found: warn
           retention-days: 14
