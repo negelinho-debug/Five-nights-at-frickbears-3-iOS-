@@ -1,4 +1,4 @@
-name: FNAFR 3 v12 - locate actual GameMaker parser crash
+name: FNAFR 3 iOS - v13 FORCE 2024.2 ROOM PARSER + IPA
 
 on:
   workflow_dispatch:
@@ -7,118 +7,789 @@ permissions:
   contents: read
 
 jobs:
-  trace:
-    name: Build debug Butterscotch and locate BinaryReader failure
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
+  build:
+    name: Test ROOM parser fix and build FNAFR 3 iOS v13
+    runs-on: macos-latest
+    timeout-minutes: 90
+
     env:
       GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
+
     steps:
-      - name: Get FNAFR 3 APK from THIS repo Releases
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p input game report
+          brew install cmake ninja sdl2 pkg-config || true
+          rm -rf work output Payload
+          mkdir -p work output
+
+      - name: Download FNAFR 3 APK from GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAGS="$(
+            gh release list \
+              --limit 20 \
+              --json tagName \
+              --jq '.[].tagName'
+          )"
+
           APK=""
+
           while IFS= read -r TAG; do
-            [ -n "$TAG" ] || continue
-            DIR="input/$(echo "$TAG" | tr '/ ' '__')"
+            [ -z "$TAG" ] && continue
+
+            DIR="work/releases/$(echo "$TAG" | tr '/ ' '__')"
             mkdir -p "$DIR"
-            gh release download "$TAG" -p '*.apk' -D "$DIR" 2>/dev/null || true
-            APK="$(find "$DIR" -type f -iname '*.apk' | grep -Ei 'frickbear|fnafr' | head -1 || true)"
-            [ -n "$APK" ] && break
-          done < <(gh release list --limit 30 --json tagName --jq '.[].tagName')
-          [ -n "$APK" ] && [ -s "$APK" ] || {
-            echo 'ERROR: Original Frickbear APK not found in this repo Releases.' >&2
+
+            gh release download "$TAG" \
+              --dir "$DIR" \
+              --pattern "*.apk" \
+              2>/dev/null || true
+
+            CANDIDATE="$(
+              find "$DIR" -type f -iname '*.apk' \
+                | grep -Ei 'frickbear|fnafr' \
+                | sed -n '1p' || true
+            )"
+
+            if [ -n "$CANDIDATE" ]; then
+              APK="$CANDIDATE"
+              break
+            fi
+          done <<< "$TAGS"
+
+          if [ -z "$APK" ]; then
+            echo "No specifically named FNAFR/Frickbear APK found; using largest APK in releases."
+            APK="$(
+              find work/releases -type f -iname '*.apk' -print0 \
+                | xargs -0 ls -S \
+                | sed -n '1p'
+            )"
+          fi
+
+          if [ -z "$APK" ] || [ ! -f "$APK" ]; then
+            echo "ERROR: APK not found."
+            echo "Upload frickbear-s-3-mobile-1.2-hotfix-patch1.apk to a GitHub Release."
             exit 1
-          }
-          unzip -p "$APK" assets/game.droid > game/game.droid
-          test -s game/game.droid
-          echo "source=$APK" > report/source.txt
-          sha256sum game/game.droid | tee report/game-droid-sha256.txt
+          fi
+
+          cp "$APK" work/FNAFR3.apk
+          ls -lh work/FNAFR3.apk
+
+      - name: Extract GameMaker game data
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf work/apk
+          mkdir -p work/apk
+          unzip -oq work/FNAFR3.apk -d work/apk
+
+          test -f work/apk/assets/game.droid
+
+          echo "===== GAME DATA ====="
+          ls -lh work/apk/assets/game.droid
+          file work/apk/assets/game.droid
+
           python3 - <<'PY'
           from pathlib import Path
-          import struct
-          b=Path('game/game.droid').read_bytes()
-          assert b[:4] == b'FORM'
-          assert len(b) == 8 + struct.unpack_from('<I', b, 4)[0]
-          assert b[17] == 17, f'Expected WAD17, got {b[17]}'
-          print('Valid outer FORM, GameMaker WAD17, bytes:',len(b))
+          p = Path("work/apk/assets/game.droid")
+          b = p.read_bytes()[:256]
+          print("header:", b[:32])
+          if not b.startswith(b"FORM"):
+              raise SystemExit("game.droid is not a GameMaker FORM archive")
+          if b"GEN8" not in b:
+              raise SystemExit("GEN8 chunk not found near header")
+          print("GameMaker VM data detected: FORM/GEN8")
           PY
 
-      - name: Install debugger and C build dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-            git cmake ninja-build build-essential pkg-config gdb xvfb \
-            libsdl2-dev libgl1-mesa-dev libx11-dev libasound2-dev \
-            libpulse-dev libsamplerate0-dev file
+          echo "===== AUDIO GROUPS ====="
+          find work/apk/assets -maxdepth 1 -type f -name 'audiogroup*.dat' -print | sort
 
-      - name: Clone and compile DEBUG Butterscotch from source
+          echo "===== TEXTURE GROUPS ====="
+          find work/apk/assets -maxdepth 2 -type f -name '*.yytex' | wc -l
+
+      - name: Use the real FNAFR 3 APK launcher icon
         shell: bash
         run: |
           set -euo pipefail
+
+          # This APK contains the Frickbear launcher artwork at res/Xy.png.
+          # Use that exact artwork instead of picking a random square resource.
+          ICON="work/apk/res/Xy.png"
+
+          if [ ! -f "$ICON" ]; then
+            # Same launcher artwork also exists at a lower density as res/7v.png.
+            ICON="work/apk/res/7v.png"
+          fi
+
+          if [ ! -f "$ICON" ]; then
+            echo "ERROR: original FNAFR 3 launcher icon was not found."
+            exit 1
+          fi
+
+          echo "$ICON" > output/icon-path.txt
+          file "$ICON"
+          ls -lh "$ICON"
+
+      - name: Clone Butterscotch runner and SDL2
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Pin the exact Butterscotch revision that produced the v12 backtrace.
           git clone --depth 1 --recurse-submodules \
-            https://github.com/ButterscotchRunner/Butterscotch.git src/Butterscotch
-          git -C src/Butterscotch rev-parse HEAD | tee report/butterscotch-commit.txt
-          # Real debug symbols, ASAN off: GDB must stop at the precise bad read.
-          cmake -S src/Butterscotch -B debug-build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_C_FLAGS_DEBUG='-O0 -g3 -fno-omit-frame-pointer' \
+            https://github.com/ButterscotchRunner/Butterscotch.git \
+            work/Butterscotch
+          git -C work/Butterscotch fetch --depth 1 origin \
+            321487c9e4fce061a9b3d59e321a8432dc12c603
+          git -C work/Butterscotch checkout --detach \
+            321487c9e4fce061a9b3d59e321a8432dc12c603
+          git -C work/Butterscotch submodule update --init --recursive --depth 1
+
+          rm -rf work/Butterscotch/vendor/SDL
+          git clone --depth 1 --branch release-2.30.12 \
+            https://github.com/libsdl-org/SDL.git \
+            work/Butterscotch/vendor/SDL
+
+          cd work/Butterscotch
+          git rev-parse HEAD | tee ../../output/butterscotch-commit.txt
+
+      - name: Force GameMaker 2024.2 ROOM tiledata path and prove parser before IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PYROOM'
+          from pathlib import Path
+          import re
+
+          p = Path("work/Butterscotch/src/data_win.c")
+          s = p.read_text(encoding="utf-8")
+          start = s.find("parseROOM(")
+          if start < 0:
+              raise SystemExit("parseROOM() not found in data_win.c")
+
+          # v12 proved the abort is in parseROOM and GDB showed
+          # found2024_2=false immediately before bogus tilemap values.
+          # GameMaker 2024.2 changed ROOM tiledata to a compressed layout.
+          tail = s[start:]
+          m = re.search(r"\bfound2024_2\s*=\s*false\s*;", tail)
+          if not m:
+              raise SystemExit("found2024_2=false marker not found inside parseROOM")
+
+          a = start + m.start()
+          b = start + m.end()
+          old = s[a:b]
+          new = re.sub(r"false", "true", old, count=1)
+          s = s[:a] + new + s[b:]
+          p.write_text(s, encoding="utf-8")
+
+          context = s[max(0,a-700):min(len(s),b+1100)]
+          Path("output/v13-room-parser-patch.txt").write_text(context, encoding="utf-8")
+          print("PATCHED:", old.strip(), "=>", new.strip())
+          PYROOM
+
+          rm -rf work/build-preflight
+          cmake \
+            -S work/Butterscotch \
+            -B work/build-preflight \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
             -DPLATFORM=cli \
             -DBACKEND=sdl2 \
             -DAUDIO_BACKEND=miniaudio \
             -DENABLE_WAD17=ON \
             -DENABLE_ASAN=OFF \
             -DENABLE_VM_STUB_LOGS=ON \
-            2>&1 | tee report/cmake-configure.log
-          cmake --build debug-build -j 4 2>&1 | tee report/debug-build.log
-          test -x debug-build/butterscotch
-          file debug-build/butterscotch | tee report/debug-binary.txt
+            2>&1 | tee output/v13-preflight-configure.log
 
-      - name: GDB backtrace at FIRST invalid BinaryReader access
+          cmake --build work/build-preflight -j 4 \
+            2>&1 | tee output/v13-preflight-build.log
+
+          test -x work/build-preflight/butterscotch
+
+          # Do not waste an iOS build if ROOM parsing still explodes.
+          python3 - <<'PYTEST'
+          from pathlib import Path
+          import subprocess
+
+          cmd = [
+              str(Path("work/build-preflight/butterscotch").resolve()),
+              "--print-rooms",
+              str(Path("work/apk/assets/game.droid").resolve()),
+          ]
+          try:
+              r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 text=True, timeout=120)
+              out = r.stdout
+              rc = r.returncode
+          except subprocess.TimeoutExpired as e:
+              out = (e.stdout or "") + "\nTIMEOUT after 120 seconds\n"
+              rc = 124
+          Path("output/v13-preflight-parser.log").write_text(out, encoding="utf-8", errors="replace")
+          Path("output/v13-preflight-exit.txt").write_text(str(rc)+"\n")
+          print(out[-12000:])
+          if rc != 0 or "BinaryReader: buffer read error" in out:
+              raise SystemExit("v13 parser patch did NOT fix ROOM parsing; IPA intentionally not built")
+          print("PRECHECK PASSED: all rooms parsed without the v12 BinaryReader abort")
+          PYTEST
+
+      - name: Patch Butterscotch for iPhone - miniaudio Objective-C fix
         shell: bash
         run: |
-          set -uo pipefail
-          ulimit -c 0 || true
-          # The v11 test showed an abort during --print-rooms. Running the
-          # DEBUG source build with GDB should reveal the parser function.
-          xvfb-run -a timeout 180s gdb -q -batch \
-            -ex 'set pagination off' \
-            -ex 'set print pretty on' \
-            -ex 'set print elements 40' \
-            -ex 'handle SIGABRT stop print nopass' \
-            -ex 'handle SIGSEGV stop print nopass' \
-            -ex 'run' \
-            -ex 'bt full 40' \
-            -ex 'info registers' \
-            -ex 'thread apply all bt 15' \
-            --args "$PWD/debug-build/butterscotch" \
-            --print-rooms "$PWD/game/game.droid" \
-            > report/gdb-full.txt 2>&1
-          RC=$?
-          echo "$RC" > report/gdb-exit.txt
-          grep -E '^#([0-9]+|\s)|BinaryReader|buffer read error|signal SIG' \
-            report/gdb-full.txt | head -130 > report/KEY-STACK-FRAMES.txt || true
-          if grep -q 'BinaryReader: buffer read error' report/gdb-full.txt; then
-            echo 'REPRODUCED: precise source-code stack in gdb-full.txt' \
-              | tee report/CONCLUSION.txt
-          else
-            echo 'Check GDB full output: error may be build-specific or happen earlier.' \
-              | tee report/CONCLUSION.txt
-          fi
-          cat report/KEY-STACK-FRAMES.txt || true
-          # This job records data; a positive run is NOT a fixed runner or IPA.
-          exit 0
+          set -euo pipefail
 
-      - name: Upload report (send this ZIP to ChatGPT)
+          python3 - <<'PY2'
+          from pathlib import Path
+          import re
+
+          root = Path("work/Butterscotch")
+          cmake = root / "CMakeLists.txt"
+          s = cmake.read_text(encoding="utf-8")
+
+          # ------------------------------------------------------------
+          # v10 direct-boot fix:
+          # current Butterscotch CLI entry point is src/cli/main.c:
+          #
+          #   int main(int argc, char* argv[])
+          #
+          # iOS launches the .app with no game-path argument. Instead of
+          # searching every source file with a regex (v9), patch the exact
+          # known CLI entry point and inject assets/game.droid as argv[1].
+          # ------------------------------------------------------------
+          cli_main = root / "src" / "cli" / "main.c"
+
+          if not cli_main.exists():
+              raise SystemExit("Missing current Butterscotch src/cli/main.c")
+
+          cli = cli_main.read_text(encoding="utf-8")
+
+          main_marker = """int main(int argc, char* argv[]) {
+              setbuf(stderr, NULL);
+          """
+
+          direct_boot_main = """int main(int argc, char* argv[]) {
+              setbuf(stderr, NULL);
+
+              /*
+               * FNAFR 3 iOS direct boot:
+               * tapping the app icon gives no CLI game argument.
+               * Force the bundled GameMaker archive.
+               */
+              char* fnafr3_ios_argv[4];
+
+              if (argc < 2) {
+                  fnafr3_ios_argv[0] = argv[0];
+                  fnafr3_ios_argv[1] = "--lazy-rooms";
+                  fnafr3_ios_argv[2] = "assets/game.droid";
+                  fnafr3_ios_argv[3] = NULL;
+
+                  argv = fnafr3_ios_argv;
+                  argc = 3;
+              }
+          """
+
+          if main_marker not in cli:
+              Path("output/v10-cli-main-current.txt").write_text(
+                  cli,
+                  encoding="utf-8"
+              )
+              raise SystemExit(
+                  "Current src/cli/main.c entry point changed; exact marker not found"
+              )
+
+          cli = cli.replace(main_marker, direct_boot_main, 1)
+          cli_main.write_text(cli, encoding="utf-8")
+
+          Path("output/v10-cli-main-patched.txt").write_text(
+              cli,
+              encoding="utf-8"
+          )
+
+          print("DIRECT_BOOT_PATCHED_FILE=", cli_main)
+          print("DIRECT_BOOT_ARGS=--lazy-rooms assets/game.droid")
+
+          s, n = re.subn(
+              r'project\s*\(\s*butterscotch\s+C(?:\s+OBJC)?\s*\)',
+              'project(butterscotch C)\n'
+              'if(CMAKE_SYSTEM_NAME STREQUAL "iOS")\n'
+              '    set(BUTTERSCOTCH_IOS ON)\n'
+              'endif()',
+              s,
+              count=1
+          )
+          if n != 1:
+              raise SystemExit("Could not patch project() declaration")
+
+          sdl_pattern = re.compile(
+              r'elseif\s*\(\s*BACKEND\s+STREQUAL\s+"sdl2"\s*\)'
+              r'.*?'
+              r'(?=elseif\s*\(\s*BACKEND\s+STREQUAL\s+"sdl3"\s*\))',
+              re.S
+          )
+
+          sdl_replacement = '''elseif(BACKEND STREQUAL "sdl2")
+              add_compile_definitions(USE_SDL2)
+              if(BUTTERSCOTCH_IOS)
+                  set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+                  set(SDL_STATIC ON CACHE BOOL "" FORCE)
+                  set(SDL_TEST OFF CACHE BOOL "" FORCE)
+                  set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+                  set(SDL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+                  add_subdirectory(vendor/SDL EXCLUDE_FROM_ALL)
+                  target_include_directories(
+                      butterscotch
+                      PRIVATE
+                      ${CMAKE_SOURCE_DIR}/vendor/SDL/include
+                  )
+                  set(BACKEND_LIBRARIES SDL2::SDL2-static SDL2::SDL2main)
+              else()
+                  find_package(PkgConfig REQUIRED)
+                  pkg_check_modules(SDL2 REQUIRED sdl2)
+                  target_include_directories(butterscotch PRIVATE ${SDL2_INCLUDE_DIRS})
+                  target_link_directories(butterscotch PRIVATE ${SDL2_LIBRARY_DIRS})
+                  set(BACKEND_LIBRARIES ${SDL2_LIBRARIES})
+              endif()
+          '''
+
+          s, n = sdl_pattern.subn(sdl_replacement, s, count=1)
+          if n != 1:
+              pos = s.find('BACKEND STREQUAL "sdl2"')
+              Path("output/current-sdl2-cmake-snippet.txt").write_text(
+                  s[max(0, pos-500):pos+1800] if pos >= 0 else s[:3500],
+                  encoding="utf-8"
+              )
+              raise SystemExit("Could not locate current SDL2 backend block")
+
+          # On iOS, miniaudio includes AVFoundation/Foundation headers.
+          # The implementation file must therefore be compiled as Objective-C,
+          # while the rest of Butterscotch can stay plain C.
+          audio_marker = 'file(GLOB AUDIO_SOURCES src/audio/miniaudio/*.c)'
+          audio_replacement = '''file(GLOB AUDIO_SOURCES src/audio/miniaudio/*.c)
+              if(BUTTERSCOTCH_IOS)
+                  enable_language(OBJC)
+                  foreach(_audio_src IN LISTS AUDIO_SOURCES)
+                      if(_audio_src MATCHES "ma_audio_system\\.c$")
+                          set_source_files_properties(
+                              "${_audio_src}"
+                              PROPERTIES LANGUAGE OBJC
+                          )
+                      endif()
+                  endforeach()
+              endif()'''
+
+          if audio_marker not in s:
+              raise SystemExit("Could not find miniaudio source block")
+
+          s = s.replace(audio_marker, audio_replacement, 1)
+
+          anchor = 'if(BACKEND STREQUAL "glfw3")'
+          pos = s.find(anchor)
+          if pos < 0:
+              raise SystemExit("Could not find CLI backend anchor")
+
+          ios_block = r'''
+              if(BUTTERSCOTCH_IOS)
+                  set(PLATFORM_LIBRARIES
+                      ${PLATFORM_LIBRARIES}
+                      "-framework OpenGLES"
+                      "-framework UIKit"
+                      "-framework Foundation"
+                      "-framework QuartzCore"
+                      "-framework CoreGraphics"
+                      "-framework GameController"
+                      "-framework AudioToolbox"
+                      "-framework AVFoundation"
+                      "-framework CoreAudio"
+                  )
+                  target_sources(
+                      butterscotch
+                      PRIVATE
+                      ${CMAKE_SOURCE_DIR}/ios_bootstrap.c
+                  )
+              endif()
+
+          '''
+
+          s = s[:pos] + ios_block + s[pos:]
+          cmake.write_text(s, encoding="utf-8")
+
+          (root / "ios_bootstrap.c").write_text(r'''
+          #include <mach-o/dyld.h>
+          #include <fcntl.h>
+          #include <limits.h>
+          #include <signal.h>
+          #include <stdint.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <sys/stat.h>
+          #include <unistd.h>
+
+          static char g_log_path[PATH_MAX];
+          static char g_crash_path[PATH_MAX];
+
+          static void make_dir_if_needed(const char *path)
+          {
+              if (path != NULL && path[0] != '\0')
+                  mkdir(path, 0755);
+          }
+
+          static void write_crash_signal(int sig)
+          {
+              int fd = open(
+                  g_crash_path,
+                  O_WRONLY | O_CREAT | O_APPEND,
+                  0644
+              );
+
+              if (fd >= 0)
+              {
+                  char buf[64];
+                  int n = snprintf(
+                      buf,
+                      sizeof(buf),
+                      "signal=%d\n",
+                      sig
+                  );
+
+                  if (n > 0)
+                      write(fd, buf, (size_t)n);
+
+                  close(fd);
+              }
+
+              signal(sig, SIG_DFL);
+              raise(sig);
+          }
+
+          __attribute__((constructor))
+          static void FNAFR3_DirectBoot(void)
+          {
+              const char *home = getenv("HOME");
+
+              if (home != NULL)
+              {
+                  char documents[PATH_MAX];
+                  char mods[PATH_MAX];
+                  char readme[PATH_MAX];
+
+                  snprintf(documents, sizeof(documents), "%s/Documents", home);
+                  snprintf(mods, sizeof(mods), "%s/Documents/Mods", home);
+                  snprintf(g_log_path, sizeof(g_log_path), "%s/Documents/FNAFR3-runtime.log", home);
+                  snprintf(g_crash_path, sizeof(g_crash_path), "%s/Documents/FNAFR3-crash.txt", home);
+
+                  make_dir_if_needed(documents);
+                  make_dir_if_needed(mods);
+
+                  freopen(g_log_path, "a", stdout);
+                  freopen(g_log_path, "a", stderr);
+                  setvbuf(stdout, NULL, _IONBF, 0);
+                  setvbuf(stderr, NULL, _IONBF, 0);
+
+                  fprintf(stderr, "\n=== FNAFR3 iOS launch ===\n");
+
+                  snprintf(readme, sizeof(readme), "%s/Documents/Mods/README.txt", home);
+
+                  FILE *f = fopen(readme, "r");
+                  if (f != NULL)
+                  {
+                      fclose(f);
+                  }
+                  else
+                  {
+                      f = fopen(readme, "w");
+                      if (f != NULL)
+                      {
+                          fputs(
+                              "Frickbear's 3 iOS Mods folder.\n"
+                              "Put compatible mod files here.\n",
+                              f
+                          );
+                          fclose(f);
+                      }
+                  }
+
+                  setenv("FNAFR3_MODS_DIR", mods, 1);
+
+                  signal(SIGABRT, write_crash_signal);
+                  signal(SIGSEGV, write_crash_signal);
+                  signal(SIGBUS,  write_crash_signal);
+                  signal(SIGILL,  write_crash_signal);
+                  signal(SIGFPE,  write_crash_signal);
+              }
+
+              setenv("SDL_RENDER_VSYNC", "1", 1);
+
+              char path[PATH_MAX];
+              uint32_t size = (uint32_t)sizeof(path);
+
+              if (_NSGetExecutablePath(path, &size) != 0)
+                  return;
+
+              path[sizeof(path) - 1] = '\0';
+
+              char *slash = strrchr(path, '/');
+              if (slash != NULL)
+              {
+                  *slash = '\0';
+                  chdir(path);
+              }
+
+              fprintf(stderr, "bundle_cwd=%s\n", path);
+          }
+          ''', encoding="utf-8")
+
+          patched = cmake.read_text(encoding="utf-8")
+          if "add_library(glad STATIC vendor/glad/src/glad.c)" not in patched:
+              raise SystemExit("GLAD block disappeared unexpectedly")
+
+          Path("output/v7-cmake-patched.txt").write_text(patched, encoding="utf-8")
+          print("v7 patch applied: miniaudio Objective-C + direct boot + GLAD preserved.")
+          PY2
+
+      - name: Configure iOS arm64 build
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cmake \
+            -S work/Butterscotch \
+            -B work/build-ios \
+            -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO \
+            -DPLATFORM=cli \
+            -DBACKEND=sdl2 \
+            -DAUDIO_BACKEND=miniaudio \
+            -DENABLE_WAD17=ON \
+            -DENABLE_LEGACY_GL=OFF \
+            -DENABLE_MODERN_GL=ON \
+            -DENABLE_ASAN=OFF \
+            -DENABLE_VM_GML_PROFILER=OFF \
+            -DENABLE_VM_TRACING=OFF \
+            -DENABLE_VM_OPCODE_PROFILER=OFF \
+            -DENABLE_VM_STUB_LOGS=ON \
+            -DENABLE_VM_EXCEPTIONS_LOGS=ON \
+            -DCMAKE_BUILD_TYPE=Release \
+            2>&1 | tee output/cmake-configure.log
+
+      - name: Build Butterscotch for iPhone
+        id: native_build
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -o pipefail
+
+          cmake \
+            --build work/build-ios \
+            --config Release \
+            --target butterscotch \
+            -- -sdk iphoneos \
+               CODE_SIGNING_ALLOWED=NO \
+               CODE_SIGNING_REQUIRED=NO \
+               DEVELOPMENT_TEAM= \
+            2>&1 | tee output/build.log
+
+          RC=${PIPESTATUS[0]}
+          echo "$RC" > output/build-exit-code.txt
+          exit "$RC"
+
+      - name: Extract build errors
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          grep -E \
+            'error:|fatal error:|Undefined symbols|ld: |CMake Error|FAILED:|ma_audio_system\\.(c|o)|-x objective-c' \
+            output/build.log \
+            | tail -800 \
+            > output/error-summary.txt || true
+
+          cat output/error-summary.txt || true
+
+      - name: Package FNAFR 3 unsigned IPA
+        if: steps.native_build.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BIN="$(
+            find work/build-ios \
+              -type f \
+              -name 'butterscotch' \
+              -perm -111 \
+              | grep -E 'Release|iphoneos' \
+              | sed -n '1p'
+          )"
+
+          if [ -z "$BIN" ]; then
+            BIN="$(
+              find work/build-ios \
+                -type f \
+                -name 'butterscotch' \
+                -perm -111 \
+                | sed -n '1p'
+            )"
+          fi
+
+          if [ -z "$BIN" ] || [ ! -f "$BIN" ]; then
+            echo "ERROR: iOS runner binary not found."
+            exit 1
+          fi
+
+          echo "RUNNER=$BIN"
+          file "$BIN"
+
+          APP="$PWD/Payload/FNAFR3.app"
+          mkdir -p "$APP"
+
+          cp "$BIN" "$APP/FNAFR3"
+          chmod +x "$APP/FNAFR3"
+
+          cp -R work/apk/assets "$APP/assets"
+
+          # v13 direct boot uses --lazy-rooms and this exact path.
+          test -f "$APP/assets/game.droid"
+          ls -lh "$APP/assets/game.droid"
+
+          find "$APP/assets" -maxdepth 1 -type f \
+            \( -iname '*.dll' -o -iname '*.exe' \) \
+            -delete || true
+
+          cat > "$APP/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDisplayName</key>
+            <string>Frickbear's 3</string>
+            <key>CFBundleExecutable</key>
+            <string>FNAFR3</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.frickbears3.ios.port</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundleName</key>
+            <string>Frickbears3</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.2</string>
+            <key>CFBundleVersion</key>
+            <string>2</string>
+            <key>LSRequiresIPhoneOS</key>
+            <true/>
+            <key>MinimumOSVersion</key>
+            <string>15.0</string>
+            <key>UIApplicationSupportsIndirectInputEvents</key>
+            <true/>
+            <key>UIRequiresFullScreen</key>
+            <true/>
+
+            <key>UIFileSharingEnabled</key>
+            <true/>
+            <key>LSSupportsOpeningDocumentsInPlace</key>
+            <true/>
+            <key>CADisableMinimumFrameDurationOnPhone</key>
+            <true/>
+
+            <key>UISupportedInterfaceOrientations</key>
+            <array>
+              <string>UIInterfaceOrientationLandscapeLeft</string>
+              <string>UIInterfaceOrientationLandscapeRight</string>
+            </array>
+
+            <key>CFBundleIcons</key>
+            <dict>
+              <key>CFBundlePrimaryIcon</key>
+              <dict>
+                <key>CFBundleIconFiles</key>
+                <array>
+                  <string>Icon-60</string>
+                </array>
+                <key>CFBundleIconName</key>
+                <string>AppIcon</string>
+              </dict>
+            </dict>
+
+            <key>CFBundleIcons~ipad</key>
+            <dict>
+              <key>CFBundlePrimaryIcon</key>
+              <dict>
+                <key>CFBundleIconFiles</key>
+                <array>
+                  <string>Icon-60</string>
+                  <string>Icon-76</string>
+                  <string>Icon-83.5</string>
+                </array>
+                <key>CFBundleIconName</key>
+                <string>AppIcon</string>
+              </dict>
+            </dict>
+          </dict>
+          </plist>
+          PLIST
+
+          ICON="$(cat output/icon-path.txt)"
+
+          # Native iPhone/iPad icon sizes generated from the exact APK launcher art.
+          sips -z 120 120 "$ICON" --out "$APP/Icon-60@2x.png" >/dev/null
+          sips -z 180 180 "$ICON" --out "$APP/Icon-60@3x.png" >/dev/null
+          sips -z 152 152 "$ICON" --out "$APP/Icon-76@2x.png" >/dev/null
+          sips -z 167 167 "$ICON" --out "$APP/Icon-83.5@2x.png" >/dev/null
+
+          rm -rf "$APP/_CodeSignature"
+          rm -f "$APP/embedded.mobileprovision"
+
+          /usr/bin/zip -qry \
+            FNAFR-3-Mobile-iOS-v13-ROOM-FIX-UNSIGNED.ipa \
+            Payload
+
+          ls -lh FNAFR-3-Mobile-iOS-v13-ROOM-FIX-UNSIGNED.ipa
+
+      - name: Upload unsigned IPA
+        if: steps.native_build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FNAFR-3-Mobile-iOS-v13-ROOM-FIX-UNSIGNED
+          path: FNAFR-3-Mobile-iOS-v13-ROOM-FIX-UNSIGNED.ipa
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-v12-Actual-Parser-Backtrace
-          path: report/
+          name: FNAFR-3-Mobile-iOS-v13-Diagnostics
+          path: |
+            output
           if-no-files-found: warn
-          retention-days: 14
+          compression-level: 6
+
+      - name: Final status
+        if: always()
+        shell: bash
+        run: |
+          echo "Native build outcome: ${{ steps.native_build.outcome }}"
+
+          if [ "${{ steps.native_build.outcome }}" != "success" ]; then
+            echo "v13 stopped before IPA creation. Check Diagnostics for the exact next error."
+            echo "Download the Diagnostics artifact and use error-summary.txt/build.log for v2."
+            exit 1
+          fi
+
+          test -f FNAFR-3-Mobile-iOS-v13-ROOM-FIX-UNSIGNED.ipa
+          echo "SUCCESS: FNAFR-3-Mobile-iOS-v13-ROOM-FIX-UNSIGNED.ipa created."
