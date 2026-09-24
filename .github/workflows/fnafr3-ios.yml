@@ -1,4 +1,4 @@
-name: FNAFR 3 iOS - v14.5B DIRECT TITLE BOOT
+name: FNAFR 3 iOS - v14.6 VERIFIED DIRECT TITLE
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: Build FNAFR 3 iOS v14.5B direct TitleScreen candidate
+    name: Build FNAFR 3 iOS v14.6 verified direct TitleScreen
     runs-on: macos-14
     timeout-minutes: 90
 
@@ -154,7 +154,7 @@ jobs:
           print("PATCHED:", old.strip(), "=>", new.strip())
           PYROOM
 
-      - name: Add v14 external textures + VM builtins + GLES fixes
+      - name: Add v14.6 external textures + VM builtins + verified GLES fix
         shell: bash
         run: |
           set -euo pipefail
@@ -538,15 +538,20 @@ jobs:
           gl = root / "src" / "gl" / "gl_renderer.c"
           s = gl.read_text(encoding="utf-8")
 
-          fragment_match = re.search(
-              r"(?m)^[ \\t]*char\\* patchedFragmentSource = nullptr;[ \\t]*$",
-              s,
+          # Exact declaration block verified against pinned Butterscotch
+          # commit 321487c9e4fce061a9b3d59e321a8432dc12c603.
+          small_anchor = (
+              "        char* patchedVertexSource = nullptr;\\n"
+              "        char* patchedFragmentSource = nullptr;\\n"
+              "\\n"
           )
 
-          if fragment_match is None:
-              raise SystemExit("patchedFragmentSource declaration not found")
-
-          small_anchor = fragment_match.group(0) + "\\n"
+          if small_anchor not in s:
+              Path("output/v14.6-gl-renderer-current.c").write_text(
+                  s,
+                  encoding="utf-8",
+              )
+              raise SystemExit("verified GL shader declaration block not found")
 
           derivatives = r'''
               /*
@@ -725,7 +730,7 @@ jobs:
           print("v14.5B direct-title fallback patch applied")
           PYV144
 
-      - name: Patch v14.5B direct TitleScreen boot switch
+      - name: Patch v14.6 direct TitleScreen boot switch
         shell: bash
         run: |
           set -euo pipefail
@@ -764,7 +769,7 @@ jobs:
 
           s = s.replace(old, new, 1)
           p.write_text(s, encoding="utf-8")
-          print("v14.5B direct-title runner patch applied")
+          print("v14.6 direct-title runner patch applied")
           PYDIRECT
 
       - name: Build CLI preflight and test parser
@@ -1249,17 +1254,17 @@ jobs:
           rm -f "$APP/embedded.mobileprovision"
 
           /usr/bin/zip -qry \
-            FNAFR-3-Mobile-iOS-v14.5B-DIRECT-TITLE-UNSIGNED.ipa \
+            FNAFR-3-Mobile-iOS-v14.6-VERIFIED-DIRECT-TITLE-UNSIGNED.ipa \
             Payload
 
-          ls -lh FNAFR-3-Mobile-iOS-v14.5B-DIRECT-TITLE-UNSIGNED.ipa
+          ls -lh FNAFR-3-Mobile-iOS-v14.6-VERIFIED-DIRECT-TITLE-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         if: steps.native_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-iOS-v14.5B-DIRECT-TITLE-UNSIGNED
-          path: FNAFR-3-Mobile-iOS-v14.5B-DIRECT-TITLE-UNSIGNED.ipa
+          name: FNAFR-3-Mobile-iOS-v14.6-VERIFIED-DIRECT-TITLE-UNSIGNED
+          path: FNAFR-3-Mobile-iOS-v14.6-VERIFIED-DIRECT-TITLE-UNSIGNED.ipa
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -1268,7 +1273,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-iOS-v14.5B-Diagnostics
+          name: FNAFR-3-Mobile-iOS-v14.6-Diagnostics
           path: output
           if-no-files-found: warn
           compression-level: 6
@@ -1285,5 +1290,5 @@ jobs:
             exit 1
           fi
 
-          test -f FNAFR-3-Mobile-iOS-v14.5B-DIRECT-TITLE-UNSIGNED.ipa
-          echo "SUCCESS: FNAFR-3-Mobile-iOS-v14.5B-DIRECT-TITLE-UNSIGNED.ipa created."
+          test -f FNAFR-3-Mobile-iOS-v14.6-VERIFIED-DIRECT-TITLE-UNSIGNED.ipa
+          echo "SUCCESS: FNAFR-3-Mobile-iOS-v14.6-VERIFIED-DIRECT-TITLE-UNSIGNED.ipa created."
