@@ -1,4 +1,4 @@
-name: FNAFR 3 iOS - v14 HOTFIX NO-PATCH1 + TEXTURES + VM FIXES
+name: FNAFR 3 iOS - v14.1 HOTFIX NO-PATCH1 + YYTEX AUTODETECT
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: Build FNAFR 3 iOS v14 playable candidate
+    name: Build FNAFR 3 iOS v14.1 playable candidate
     runs-on: macos-14
     timeout-minutes: 90
 
@@ -154,7 +154,7 @@ jobs:
           print("PATCHED:", old.strip(), "=>", new.strip())
           PYROOM
 
-      - name: Add v14 external textures + VM builtins + GLES fixes
+      - name: Add v14.1 external textures + VM builtins + GLES fixes
         shell: bash
         run: |
           set -euo pipefail
@@ -232,19 +232,67 @@ jobs:
                       "External texture group has no directory: " + name
                   )
 
-              stem = (
-                  directory[len("texgroup_"):]
-                  if directory.startswith("texgroup_")
-                  else name.lower()
+              # v14.1: DO NOT guess the filename from the TGIN group name.
+              # This APK has at least one group (fbending) whose actual .yytex
+              # basename does not follow the assumed "fbending_0.yytex" rule.
+              # Read the files that are really present in the APK and map them
+              # to TGIN page IDs in natural numeric order.
+              import re
+
+              group_dir = assets / directory
+
+              def natural_key(path):
+                  parts = re.split(r"(\d+)", path.name.lower())
+                  return [int(x) if x.isdigit() else x for x in parts]
+
+              candidates = []
+
+              if group_dir.is_dir():
+                  candidates = sorted(
+                      [p for p in group_dir.iterdir()
+                       if p.is_file() and p.suffix.lower() == extension.lower()],
+                      key=natural_key,
+                  )
+
+              # Fallback for APKs that place a texture group one level deeper
+              # or use an unexpected directory name.
+              if len(candidates) != page_count:
+                  stem = (
+                      directory[len("texgroup_"):]
+                      if directory.startswith("texgroup_")
+                      else name.lower()
+                  )
+
+                  fallback = [
+                      p for p in assets.rglob(f"*{extension}")
+                      if stem.lower() in p.name.lower()
+                      or directory.lower() in str(p.parent).lower()
+                  ]
+                  fallback = sorted(set(fallback), key=natural_key)
+
+                  if len(fallback) == page_count:
+                      candidates = fallback
+
+              if len(candidates) != page_count:
+                  print(
+                      f"Texture group {name!r}: TGIN expects {page_count} pages, "
+                      f"APK contains {len(candidates)} matching files"
+                  )
+                  if group_dir.exists():
+                      print("Actual files in", group_dir)
+                      for p in sorted(group_dir.iterdir()):
+                          print("  ", p.name)
+                  raise SystemExit(
+                      f"Cannot safely map external texture group {name!r}"
+                  )
+
+              print(
+                  f"Texture group {name!r}: {page_count} pages -> "
+                  f"{directory}"
               )
 
-              for index_in_group, page_id in enumerate(pages):
-                  rel = f"{directory}/{stem}_{index_in_group}{extension}"
-                  full = assets / rel
-                  if not full.is_file():
-                      raise SystemExit(
-                          f"Missing external texture page {page_id}: {full}"
-                      )
+              for page_id, full in zip(pages, candidates):
+                  rel = full.relative_to(assets).as_posix()
                   mapping[page_id] = rel
 
           print("TGIN version:", version)
@@ -275,7 +323,7 @@ jobs:
           lines += ["};", "", "#endif", ""]
           header.write_text("\n".join(lines), encoding="utf-8")
 
-          Path("output/v14-external-textures.txt").write_text(
+          Path("output/v14.1-external-textures.txt").write_text(
               "\n".join(f"{k}: {mapping[k]}" for k in sorted(mapping)) + "\n",
               encoding="utf-8",
           )
@@ -580,7 +628,7 @@ jobs:
           s = s.replace(small_anchor, small_anchor + derivatives, 1)
           gl.write_text(s, encoding="utf-8")
 
-          Path("output/v14-compat-summary.txt").write_text(
+          Path("output/v14.1-compat-summary.txt").write_text(
               "FNAFR 3 v14 compatibility\n"
               f"external_texture_pages={len(mapping)}\n"
               "vm_builtins=patched\n"
@@ -646,17 +694,17 @@ jobs:
             --headless \
             --exit-at-frame 300 \
             work/apk/assets/game.droid \
-            > output/v14-headless.log 2>&1
+            > output/v14.1-headless.log 2>&1
 
-          echo "$?" > output/v14-headless-exit.txt
+          echo "$?" > output/v14.1-headless-exit.txt
 
           echo "===== HEADLESS TAIL ====="
-          tail -250 output/v14-headless.log || true
+          tail -250 output/v14.1-headless.log || true
 
           echo "===== UNKNOWN FUNCTIONS ====="
-          grep -F 'Unknown function' output/v14-headless.log \
+          grep -F 'Unknown function' output/v14.1-headless.log \
             | sort -u \
-            | tee output/v14-unknown-functions.txt \
+            | tee output/v14.1-unknown-functions.txt \
             || true
 
           exit 0
@@ -1061,17 +1109,17 @@ jobs:
           rm -f "$APP/embedded.mobileprovision"
 
           /usr/bin/zip -qry \
-            FNAFR-3-Mobile-iOS-v14-HOTFIX-COMPAT-UNSIGNED.ipa \
+            FNAFR-3-Mobile-iOS-v14.1-HOTFIX-COMPAT-UNSIGNED.ipa \
             Payload
 
-          ls -lh FNAFR-3-Mobile-iOS-v14-HOTFIX-COMPAT-UNSIGNED.ipa
+          ls -lh FNAFR-3-Mobile-iOS-v14.1-HOTFIX-COMPAT-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         if: steps.native_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-iOS-v14-HOTFIX-COMPAT-UNSIGNED
-          path: FNAFR-3-Mobile-iOS-v14-HOTFIX-COMPAT-UNSIGNED.ipa
+          name: FNAFR-3-Mobile-iOS-v14.1-HOTFIX-COMPAT-UNSIGNED
+          path: FNAFR-3-Mobile-iOS-v14.1-HOTFIX-COMPAT-UNSIGNED.ipa
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -1097,5 +1145,5 @@ jobs:
             exit 1
           fi
 
-          test -f FNAFR-3-Mobile-iOS-v14-HOTFIX-COMPAT-UNSIGNED.ipa
-          echo "SUCCESS: FNAFR-3-Mobile-iOS-v14-HOTFIX-COMPAT-UNSIGNED.ipa created."
+          test -f FNAFR-3-Mobile-iOS-v14.1-HOTFIX-COMPAT-UNSIGNED.ipa
+          echo "SUCCESS: FNAFR-3-Mobile-iOS-v14.1-HOTFIX-COMPAT-UNSIGNED.ipa created."
