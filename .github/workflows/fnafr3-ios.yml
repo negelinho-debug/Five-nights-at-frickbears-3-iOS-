@@ -1,4 +1,4 @@
-name: FNAFR 3 iOS - v14.1 HOTFIX NO-PATCH1 + YYTEX AUTODETECT
+name: FNAFR 3 iOS - v14.2 GL ANCHOR FIX + EXTERNAL TEXTURES + VM/GLES
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: Build FNAFR 3 iOS v14.1 playable candidate
+    name: Build FNAFR 3 iOS v14.2 playable candidate
     runs-on: macos-14
     timeout-minutes: 90
 
@@ -154,7 +154,7 @@ jobs:
           print("PATCHED:", old.strip(), "=>", new.strip())
           PYROOM
 
-      - name: Add v14.1 external textures + VM builtins + GLES fixes
+      - name: Add v14.2 external textures + VM builtins + GLES fixes
         shell: bash
         run: |
           set -euo pipefail
@@ -162,6 +162,7 @@ jobs:
           python3 - <<'PYV14'
           from pathlib import Path
           import struct
+          import re
 
           root = Path("work/Butterscotch")
           assets = Path("work/apk/assets")
@@ -232,67 +233,39 @@ jobs:
                       "External texture group has no directory: " + name
                   )
 
-              # v14.1: DO NOT guess the filename from the TGIN group name.
-              # This APK has at least one group (fbending) whose actual .yytex
-              # basename does not follow the assumed "fbending_0.yytex" rule.
-              # Read the files that are really present in the APK and map them
-              # to TGIN page IDs in natural numeric order.
-              import re
-
+              # Do NOT guess the filename from the directory name.
+              # Example from this APK:
+              #   texgroup_fbending/finalbossending_0.yytex
+              # not:
+              #   texgroup_fbending/fbending_0.yytex
               group_dir = assets / directory
+              candidates = list(group_dir.glob(f"*{extension}"))
 
-              def natural_key(path):
+              def natural_texture_key(path):
                   parts = re.split(r"(\d+)", path.name.lower())
-                  return [int(x) if x.isdigit() else x for x in parts]
-
-              candidates = []
-
-              if group_dir.is_dir():
-                  candidates = sorted(
-                      [p for p in group_dir.iterdir()
-                       if p.is_file() and p.suffix.lower() == extension.lower()],
-                      key=natural_key,
-                  )
-
-              # Fallback for APKs that place a texture group one level deeper
-              # or use an unexpected directory name.
-              if len(candidates) != page_count:
-                  stem = (
-                      directory[len("texgroup_"):]
-                      if directory.startswith("texgroup_")
-                      else name.lower()
-                  )
-
-                  fallback = [
-                      p for p in assets.rglob(f"*{extension}")
-                      if stem.lower() in p.name.lower()
-                      or directory.lower() in str(p.parent).lower()
+                  return [
+                      int(part) if part.isdigit() else part
+                      for part in parts
                   ]
-                  fallback = sorted(set(fallback), key=natural_key)
 
-                  if len(fallback) == page_count:
-                      candidates = fallback
+              candidates.sort(key=natural_texture_key)
 
               if len(candidates) != page_count:
-                  print(
-                      f"Texture group {name!r}: TGIN expects {page_count} pages, "
-                      f"APK contains {len(candidates)} matching files"
-                  )
-                  if group_dir.exists():
-                      print("Actual files in", group_dir)
-                      for p in sorted(group_dir.iterdir()):
-                          print("  ", p.name)
                   raise SystemExit(
-                      f"Cannot safely map external texture group {name!r}"
+                      f"Texture group {name} ({directory}) expected "
+                      f"{page_count} files, found {len(candidates)}: "
+                      f"{[p.name for p in candidates]}"
                   )
 
-              print(
-                  f"Texture group {name!r}: {page_count} pages -> "
-                  f"{directory}"
-              )
+              for index_in_group, page_id in enumerate(pages):
+                  rel = f"{directory}/{candidates[index_in_group].name}"
+                  full = assets / rel
 
-              for page_id, full in zip(pages, candidates):
-                  rel = full.relative_to(assets).as_posix()
+                  if not full.is_file():
+                      raise SystemExit(
+                          f"Missing external texture page {page_id}: {full}"
+                      )
+
                   mapping[page_id] = rel
 
           print("TGIN version:", version)
@@ -323,7 +296,7 @@ jobs:
           lines += ["};", "", "#endif", ""]
           header.write_text("\n".join(lines), encoding="utf-8")
 
-          Path("output/v14.1-external-textures.txt").write_text(
+          Path("output/v14.2-external-textures.txt").write_text(
               "\n".join(f"{k}: {mapping[k]}" for k in sorted(mapping)) + "\n",
               encoding="utf-8",
           )
@@ -573,15 +546,19 @@ jobs:
           gl = root / "src" / "gl" / "gl_renderer.c"
           s = gl.read_text(encoding="utf-8")
 
-          small_anchor = '''        char* patchedVertexSource = nullptr;
-              char* patchedFragmentSource = nullptr;
+          fragment_decl = "char* patchedFragmentSource = nullptr;"
+          decl_pos = s.find(fragment_decl)
 
-          '''
+          if decl_pos < 0:
+              raise SystemExit("patchedFragmentSource declaration not found")
 
-          if small_anchor not in s:
-              raise SystemExit("GL shader patch anchor changed")
+          insert_pos = s.find("\n", decl_pos)
+          if insert_pos < 0:
+              raise SystemExit("patchedFragmentSource line ending not found")
+          insert_pos += 1
 
-          derivatives = r'''        /* FNAFR 3 SDF shaders need derivatives on GLES2. */
+          derivatives = r'''
+              /* FNAFR 3 SDF shaders need derivatives on GLES2. */
               if (
                   modernGl->isGLES
                   && fragmentShaderSource != nullptr
@@ -625,11 +602,11 @@ jobs:
 
           '''
 
-          s = s.replace(small_anchor, small_anchor + derivatives, 1)
+          s = s[:insert_pos] + derivatives + s[insert_pos:]
           gl.write_text(s, encoding="utf-8")
 
-          Path("output/v14.1-compat-summary.txt").write_text(
-              "FNAFR 3 v14 compatibility\n"
+          Path("output/v14.2-compat-summary.txt").write_text(
+              "FNAFR 3 v14.2 compatibility\n"
               f"external_texture_pages={len(mapping)}\n"
               "vm_builtins=patched\n"
               "gles_standard_derivatives=patched\n",
@@ -694,17 +671,17 @@ jobs:
             --headless \
             --exit-at-frame 300 \
             work/apk/assets/game.droid \
-            > output/v14.1-headless.log 2>&1
+            > output/v14.2-headless.log 2>&1
 
-          echo "$?" > output/v14.1-headless-exit.txt
+          echo "$?" > output/v14.2-headless-exit.txt
 
           echo "===== HEADLESS TAIL ====="
-          tail -250 output/v14.1-headless.log || true
+          tail -250 output/v14.2-headless.log || true
 
           echo "===== UNKNOWN FUNCTIONS ====="
-          grep -F 'Unknown function' output/v14.1-headless.log \
+          grep -F 'Unknown function' output/v14.2-headless.log \
             | sort -u \
-            | tee output/v14.1-unknown-functions.txt \
+            | tee output/v14.2-unknown-functions.txt \
             || true
 
           exit 0
@@ -1109,17 +1086,17 @@ jobs:
           rm -f "$APP/embedded.mobileprovision"
 
           /usr/bin/zip -qry \
-            FNAFR-3-Mobile-iOS-v14.1-HOTFIX-COMPAT-UNSIGNED.ipa \
+            FNAFR-3-Mobile-iOS-v14.2-HOTFIX-COMPAT-UNSIGNED.ipa \
             Payload
 
-          ls -lh FNAFR-3-Mobile-iOS-v14.1-HOTFIX-COMPAT-UNSIGNED.ipa
+          ls -lh FNAFR-3-Mobile-iOS-v14.2-HOTFIX-COMPAT-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         if: steps.native_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-iOS-v14.1-HOTFIX-COMPAT-UNSIGNED
-          path: FNAFR-3-Mobile-iOS-v14.1-HOTFIX-COMPAT-UNSIGNED.ipa
+          name: FNAFR-3-Mobile-iOS-v14.2-HOTFIX-COMPAT-UNSIGNED
+          path: FNAFR-3-Mobile-iOS-v14.2-HOTFIX-COMPAT-UNSIGNED.ipa
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -1145,5 +1122,5 @@ jobs:
             exit 1
           fi
 
-          test -f FNAFR-3-Mobile-iOS-v14.1-HOTFIX-COMPAT-UNSIGNED.ipa
-          echo "SUCCESS: FNAFR-3-Mobile-iOS-v14.1-HOTFIX-COMPAT-UNSIGNED.ipa created."
+          test -f FNAFR-3-Mobile-iOS-v14.2-HOTFIX-COMPAT-UNSIGNED.ipa
+          echo "SUCCESS: FNAFR-3-Mobile-iOS-v14.2-HOTFIX-COMPAT-UNSIGNED.ipa created."
