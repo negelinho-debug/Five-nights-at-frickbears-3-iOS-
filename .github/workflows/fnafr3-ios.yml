@@ -1,4 +1,4 @@
-name: FNAFR 3 iOS - v14.3 WARNING LOOP FIX + AUDIO BUS + SDF
+name: FNAFR 3 iOS - v14.4 TITLESCREEN REDIRECT
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: Build FNAFR 3 iOS v14.3 WarningScreen candidate
+    name: Build FNAFR 3 iOS v14.4 TitleScreen candidate
     runs-on: macos-14
     timeout-minutes: 90
 
@@ -154,7 +154,7 @@ jobs:
           print("PATCHED:", old.strip(), "=>", new.strip())
           PYROOM
 
-      - name: Add v14.3 external textures + VM + restart/audio/SDF fixes
+      - name: Add v14 external textures + VM builtins + GLES fixes
         shell: bash
         run: |
           set -euo pipefail
@@ -224,6 +224,7 @@ jobs:
                   else ()
               )
 
+              # GameMaker load_type 2 = external texture group.
               if load_type != 2:
                   continue
 
@@ -236,7 +237,7 @@ jobs:
               candidates = list(group_dir.glob(f"*{extension}"))
 
               def natural_texture_key(path):
-                  parts = re.split(r"(\d+)", path.name.lower())
+                  parts = re.split(r"(\\d+)", path.name.lower())
                   return [
                       int(part) if part.isdigit() else part
                       for part in parts
@@ -247,19 +248,16 @@ jobs:
               if len(candidates) != page_count:
                   raise SystemExit(
                       f"Texture group {name} ({directory}) expected "
-                      f"{page_count} files, found {len(candidates)}: "
-                      f"{[p.name for p in candidates]}"
+                      f"{page_count} files, found {len(candidates)}"
                   )
 
               for index_in_group, page_id in enumerate(pages):
                   rel = f"{directory}/{candidates[index_in_group].name}"
                   full = assets / rel
-
                   if not full.is_file():
                       raise SystemExit(
                           f"Missing external texture page {page_id}: {full}"
                       )
-
                   mapping[page_id] = rel
 
           print("TGIN version:", version)
@@ -290,7 +288,7 @@ jobs:
           lines += ["};", "", "#endif", ""]
           header.write_text("\n".join(lines), encoding="utf-8")
 
-          Path("output/v14.3-external-textures.txt").write_text(
+          Path("output/v14-external-textures.txt").write_text(
               "\n".join(f"{k}: {mapping[k]}" for k in sorted(mapping)) + "\n",
               encoding="utf-8",
           )
@@ -389,7 +387,7 @@ jobs:
           data_win.write_text(s, encoding="utf-8")
 
           # ==========================================================
-          # MISSING GAMEMAKER BUILTINS
+          # MISSING GAMEMAKER BUILTINS FROM v13 DEVICE LOG
           # ==========================================================
 
           vm = root / "src" / "vm_builtins.c"
@@ -400,7 +398,7 @@ jobs:
               raise SystemExit("VM registration marker missing")
 
           shim = r'''
-          // ===[ FNAFR 3 iOS v14.3 COMPATIBILITY SHIMS ]===
+          // ===[ FNAFR 3 iOS v14 COMPATIBILITY SHIMS ]===
 
           static RValue fnafr_stub_zero(
               MAYBE_UNUSED VMContext* ctx,
@@ -531,145 +529,196 @@ jobs:
           '''
 
           s = s.replace(anchor, anchor + registrations, 1)
-
-          audio_var_anchor = r'''
-              logWarn("VM: [%s] Unhandled built-in variable read '%s' (arrayIndex=%d)\n", ctx->currentCodeName, name, arrayIndex);
-              return RValue_makeReal(0.0);
-          }
-          '''
-          if audio_var_anchor not in s:
-              raise SystemExit("audio_bus_main variable anchor changed")
-
-          audio_var_patch = r'''
-              if (name != nullptr && strcmp(name, "audio_bus_main") == 0) {
-                  logInfo("FNAFR3: audio_bus_main compatibility handle -> 0\n");
-                  return RValue_makeReal(0.0);
-              }
-
-              logWarn("VM: [%s] Unhandled built-in variable read '%s' (arrayIndex=%d)\n", ctx->currentCodeName, name, arrayIndex);
-              return RValue_makeReal(0.0);
-          }
-          '''
-          s = s.replace(audio_var_anchor, audio_var_patch, 1)
-
-          restart_old = r'''
-          static RValue builtin_game_restart(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE_UNUSED int32_t argCount) {
-              ctx->runner->pendingRoom = ROOM_RESTARTGAME;
-              return RValue_makeUndefined();
-          }
-          '''
-          if restart_old not in s:
-              raise SystemExit("builtin_game_restart anchor changed")
-
-          restart_new = r'''
-          static RValue builtin_game_restart(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE_UNUSED int32_t argCount) {
-              Runner* runner = ctx->runner;
-              const char* roomName = "<none>";
-              int32_t roomIndex = -1;
-
-              if (runner != nullptr && runner->currentRoom != nullptr) {
-                  roomIndex = runner->currentRoomIndex;
-                  if (runner->currentRoom->name != nullptr)
-                      roomName = runner->currentRoom->name;
-              }
-
-              logWarn(
-                  "FNAFR3: game_restart requested by code='%s' codeIndex=%d event=%d/%d room='%s' roomIndex=%d\n",
-                  ctx->currentCodeName != nullptr ? ctx->currentCodeName : "<unknown>",
-                  ctx->currentCodeIndex,
-                  ctx->currentEventType,
-                  ctx->currentEventSubtype,
-                  roomName,
-                  roomIndex
-              );
-
-              if (strcmp(roomName, "WarningScreen") == 0) {
-                  logWarn("FNAFR3: blocked game_restart inside WarningScreen to prevent boot loop\n");
-                  return RValue_makeUndefined();
-              }
-
-              if (runner != nullptr) runner->pendingRoom = ROOM_RESTARTGAME;
-              return RValue_makeUndefined();
-          }
-          '''
-          s = s.replace(restart_old, restart_new, 1)
           vm.write_text(s, encoding="utf-8")
 
           # ==========================================================
-          # GLES STANDARD DERIVATIVES FOR fwidth()
+          # GLES2 STANDARD DERIVATIVES FOR fwidth()
           # ==========================================================
 
           gl = root / "src" / "gl" / "gl_renderer.c"
           s = gl.read_text(encoding="utf-8")
 
-          fragment_decl = "char* patchedFragmentSource = nullptr;"
-          decl_pos = s.find(fragment_decl)
+          small_anchor = "        char* patchedFragmentSource = nullptr;\\n"
 
-          if decl_pos < 0:
-              raise SystemExit("patchedFragmentSource declaration not found")
-
-          insert_pos = s.find("\n", decl_pos)
-          if insert_pos < 0:
-              raise SystemExit("patchedFragmentSource line ending not found")
-          insert_pos += 1
+          if small_anchor not in s:
+              raise SystemExit("GL shader patch anchor changed")
 
           derivatives = r'''
-              /* FNAFR 3 SDF shaders need fwidth() on GLES2-style GLSL. */
+              /*
+               * GameMaker GLSLES SDF shaders in FNAFR 3 use fwidth().
+               * Some start directly with precision mediump float; and have
+               * no #version line, so prepend the derivative extension there.
+               */
               if (
                   modernGl->isGLES
                   && fragmentShaderSource != nullptr
                   && strstr(fragmentShaderSource, "fwidth") != nullptr
                   && strstr(fragmentShaderSource, "GL_OES_standard_derivatives") == nullptr
-                  && (
-                      strstr(fragmentShaderSource, "#version 100") != nullptr
-                      || strstr(fragmentShaderSource, "#version") == nullptr
-                  )
               ) {
-                  const char* ext = "#extension GL_OES_standard_derivatives : enable\n";
-                  const char* version100 = strstr(fragmentShaderSource, "#version 100");
+                  const char* ext =
+                      "#extension GL_OES_standard_derivatives : enable\n";
+                  const char* newline = strchr(fragmentShaderSource, '\n');
+                  bool hasVersion =
+                      strncmp(fragmentShaderSource, "#version", 8) == 0;
 
-                  if (version100 == fragmentShaderSource) {
-                      const char* newline = strchr(fragmentShaderSource, '\n');
-                      if (newline != nullptr) {
-                          size_t firstLen = (size_t)(newline - fragmentShaderSource) + 1;
-                          size_t extLen = strlen(ext);
-                          size_t restLen = strlen(newline + 1);
-                          patchedFragmentSource = (char*)safeMalloc(firstLen + extLen + restLen + 1);
-                          memcpy(patchedFragmentSource, fragmentShaderSource, firstLen);
-                          memcpy(patchedFragmentSource + firstLen, ext, extLen);
-                          memcpy(patchedFragmentSource + firstLen + extLen, newline + 1, restLen + 1);
-                      }
+                  if (hasVersion && newline != nullptr) {
+                      size_t firstLen =
+                          (size_t)(newline - fragmentShaderSource) + 1;
+                      size_t extLen = strlen(ext);
+                      size_t restLen = strlen(newline + 1);
+
+                      patchedFragmentSource =
+                          (char*)safeMalloc(firstLen + extLen + restLen + 1);
+
+                      memcpy(patchedFragmentSource, fragmentShaderSource, firstLen);
+                      memcpy(patchedFragmentSource + firstLen, ext, extLen);
+                      memcpy(
+                          patchedFragmentSource + firstLen + extLen,
+                          newline + 1,
+                          restLen + 1
+                      );
                   } else {
                       size_t extLen = strlen(ext);
                       size_t srcLen = strlen(fragmentShaderSource);
-                      patchedFragmentSource = (char*)safeMalloc(extLen + srcLen + 1);
+
+                      patchedFragmentSource =
+                          (char*)safeMalloc(extLen + srcLen + 1);
+
                       memcpy(patchedFragmentSource, ext, extLen);
-                      memcpy(patchedFragmentSource + extLen, fragmentShaderSource, srcLen + 1);
+                      memcpy(
+                          patchedFragmentSource + extLen,
+                          fragmentShaderSource,
+                          srcLen + 1
+                      );
                   }
 
-                  if (patchedFragmentSource != nullptr) {
-                      fragmentShaderSource = patchedFragmentSource;
-                      logInfo("FNAFR3: enabled standard derivatives for SDF fragment shader\n");
-                  }
+                  fragmentShaderSource = patchedFragmentSource;
+                  logInfo(
+                      "FNAFR3: derivatives enabled for %s\n",
+                      shdr->name
+                  );
               }
 
           '''
 
-          s = s[:insert_pos] + derivatives + s[insert_pos:]
+          s = s.replace(small_anchor, small_anchor + derivatives, 1)
           gl.write_text(s, encoding="utf-8")
 
-          Path("output/v14.3-compat-summary.txt").write_text(
-              "FNAFR 3 v14.3 compatibility\n"
+          Path("output/v14-compat-summary.txt").write_text(
+              "FNAFR 3 v14 compatibility\n"
               f"external_texture_pages={len(mapping)}\n"
               "vm_builtins=patched\n"
-              "audio_bus_main=patched\n"
-              "warning_game_restart=blocked_and_traced\n"
-              "gles_standard_derivatives=robust_patch\n",
+              "gles_standard_derivatives=patched\n",
               encoding="utf-8",
           )
 
-          print("v14.3 compatibility patches applied")
+          print("v14 compatibility patches applied")
           PYV14
+
+      - name: Patch v14.4 WarningScreen restart to TitleScreen + audio_bus_main
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PYV144'
+          from pathlib import Path
+          import re
+
+          p = Path("work/Butterscotch/src/vm_builtins.c")
+          s = p.read_text(encoding="utf-8")
+
+          restart_pattern = re.compile(
+              r'static RValue builtin_game_restart'
+              r'\(VMContext\* ctx, MAYBE_UNUSED RValue\* args, '
+              r'MAYBE_UNUSED int32_t argCount\) \{\s*'
+              r'ctx->runner->pendingRoom = ROOM_RESTARTGAME;\s*'
+              r'return RValue_makeUndefined\(\);\s*'
+              r'\}',
+              re.S,
+          )
+
+          restart_replacement = r'''static RValue builtin_game_restart(VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE_UNUSED int32_t argCount) {
+              Runner* runner = ctx->runner;
+              const char* caller =
+                  (ctx->currentCodeName != nullptr)
+                      ? ctx->currentCodeName
+                      : "<unknown>";
+              const char* roomName =
+                  (runner != nullptr &&
+                   runner->currentRoom != nullptr &&
+                   runner->currentRoom->name != nullptr)
+                      ? runner->currentRoom->name
+                      : "<none>";
+
+              logWarn(
+                  "FNAFR3: game_restart requested by %s in room %s (%d)\n",
+                  caller,
+                  roomName,
+                  runner != nullptr ? runner->currentRoomIndex : -999
+              );
+
+              /*
+               * Exact APK room order from --print-rooms:
+               *   0 StartupRoom
+               *   1 WarningScreen
+               *   2 TitleScreenMap
+               *
+               * Device log proves the immediate restart comes specifically
+               * from gml_Object_oWarningScreen_Create_0. A no-op leaves the
+               * warning room in a dead black state, so redirect ONLY that
+               * exact restart request to the next real room.
+               */
+              if (
+                  runner != nullptr
+                  && runner->currentRoomIndex == 1
+                  && caller != nullptr
+                  && strcmp(
+                      caller,
+                      "gml_Object_oWarningScreen_Create_0"
+                  ) == 0
+              ) {
+                  runner->pendingRoom = 2;
+                  logWarn(
+                      "FNAFR3: redirected WarningScreen game_restart -> "
+                      "TitleScreenMap (room 2); caller=%s\n",
+                      caller
+                  );
+                  return RValue_makeUndefined();
+              }
+
+              if (runner != nullptr)
+                  runner->pendingRoom = ROOM_RESTARTGAME;
+
+              return RValue_makeUndefined();
+          }'''
+
+          s, count = restart_pattern.subn(restart_replacement, s, count=1)
+          if count != 1:
+              raise SystemExit("Could not patch builtin_game_restart")
+
+          marker = (
+              '    logWarn("VM: [%s] Unhandled built-in variable read '
+              '\'%s\' (arrayIndex=%d)\\n", ctx->currentCodeName, name, arrayIndex);\\n'
+              '    return RValue_makeReal(0.0);\\n'
+              '}'
+          )
+
+          replacement = (
+              '    if (name != nullptr && strcmp(name, "audio_bus_main") == 0) {\\n'
+              '        logWarn("FNAFR3: compatibility value used for audio_bus_main in %s\\\\n", '
+              'ctx->currentCodeName != nullptr ? ctx->currentCodeName : "<unknown>");\\n'
+              '        return RValue_makeReal(0.0);\\n'
+              '    }\\n\\n'
+              + marker
+          )
+
+          if marker not in s:
+              raise SystemExit("Could not patch audio_bus_main fallback")
+
+          s = s.replace(marker, replacement, 1)
+          p.write_text(s, encoding="utf-8")
+          print("v14.4 TitleScreen redirect patch applied")
+          PYV144
 
       - name: Build CLI preflight and test parser
         shell: bash
@@ -710,7 +759,18 @@ jobs:
 
           tail -120 output/v14-preflight-parser.log
 
-      - name: v14 headless VM smoke test
+      - name: Disassemble WarningScreen Create for diagnostics
+        shell: bash
+        run: |
+          set +e
+          work/build-preflight/butterscotch \
+            --disassemble gml_Object_oWarningScreen_Create_0 \
+            work/apk/assets/game.droid \
+            > output/v14.4-warning-create-disasm.log 2>&1
+          tail -220 output/v14.4-warning-create-disasm.log || true
+          exit 0
+
+      - name: v14.4 headless VM smoke test
         shell: bash
         run: |
           set +e
@@ -726,17 +786,17 @@ jobs:
             --headless \
             --exit-at-frame 300 \
             work/apk/assets/game.droid \
-            > output/v14.3-headless.log 2>&1
+            > output/v14-headless.log 2>&1
 
-          echo "$?" > output/v14.3-headless-exit.txt
+          echo "$?" > output/v14-headless-exit.txt
 
           echo "===== HEADLESS TAIL ====="
-          tail -250 output/v14.3-headless.log || true
+          tail -250 output/v14-headless.log || true
 
           echo "===== UNKNOWN FUNCTIONS ====="
-          grep -F 'Unknown function' output/v14.3-headless.log \
+          grep -F 'Unknown function' output/v14-headless.log \
             | sort -u \
-            | tee output/v14.3-unknown-functions.txt \
+            | tee output/v14-unknown-functions.txt \
             || true
 
           exit 0
@@ -1141,17 +1201,17 @@ jobs:
           rm -f "$APP/embedded.mobileprovision"
 
           /usr/bin/zip -qry \
-            FNAFR-3-Mobile-iOS-v14.3-WARNING-LOOP-FIX-UNSIGNED.ipa \
+            FNAFR-3-Mobile-iOS-v14.4-TITLESCREEN-REDIRECT-UNSIGNED.ipa \
             Payload
 
-          ls -lh FNAFR-3-Mobile-iOS-v14.3-WARNING-LOOP-FIX-UNSIGNED.ipa
+          ls -lh FNAFR-3-Mobile-iOS-v14.4-TITLESCREEN-REDIRECT-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         if: steps.native_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-iOS-v14.3-WARNING-LOOP-FIX-UNSIGNED
-          path: FNAFR-3-Mobile-iOS-v14.3-WARNING-LOOP-FIX-UNSIGNED.ipa
+          name: FNAFR-3-Mobile-iOS-v14.4-TITLESCREEN-REDIRECT-UNSIGNED
+          path: FNAFR-3-Mobile-iOS-v14.4-TITLESCREEN-REDIRECT-UNSIGNED.ipa
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -1160,7 +1220,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-iOS-v14-Diagnostics
+          name: FNAFR-3-Mobile-iOS-v14.4-Diagnostics
           path: output
           if-no-files-found: warn
           compression-level: 6
@@ -1177,5 +1237,5 @@ jobs:
             exit 1
           fi
 
-          test -f FNAFR-3-Mobile-iOS-v14.3-WARNING-LOOP-FIX-UNSIGNED.ipa
-          echo "SUCCESS: FNAFR-3-Mobile-iOS-v14.3-WARNING-LOOP-FIX-UNSIGNED.ipa created."
+          test -f FNAFR-3-Mobile-iOS-v14.4-TITLESCREEN-REDIRECT-UNSIGNED.ipa
+          echo "SUCCESS: FNAFR-3-Mobile-iOS-v14.4-TITLESCREEN-REDIRECT-UNSIGNED.ipa created."
