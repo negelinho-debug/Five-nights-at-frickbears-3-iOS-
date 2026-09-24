@@ -1,4 +1,4 @@
-name: FNAFR 3 iOS - v14.4 TITLESCREEN REDIRECT
+name: FNAFR 3 iOS - v14.5B DIRECT TITLE BOOT
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: Build FNAFR 3 iOS v14.4 TitleScreen candidate
+    name: Build FNAFR 3 iOS v14.5B direct TitleScreen candidate
     runs-on: macos-14
     timeout-minutes: 90
 
@@ -538,10 +538,15 @@ jobs:
           gl = root / "src" / "gl" / "gl_renderer.c"
           s = gl.read_text(encoding="utf-8")
 
-          small_anchor = "        char* patchedFragmentSource = nullptr;\\n"
+          fragment_match = re.search(
+              r"(?m)^[ \\t]*char\\* patchedFragmentSource = nullptr;[ \\t]*$",
+              s,
+          )
 
-          if small_anchor not in s:
-              raise SystemExit("GL shader patch anchor changed")
+          if fragment_match is None:
+              raise SystemExit("patchedFragmentSource declaration not found")
+
+          small_anchor = fragment_match.group(0) + "\\n"
 
           derivatives = r'''
               /*
@@ -717,8 +722,50 @@ jobs:
 
           s = s.replace(marker, replacement, 1)
           p.write_text(s, encoding="utf-8")
-          print("v14.4 TitleScreen redirect patch applied")
+          print("v14.5B direct-title fallback patch applied")
           PYV144
+
+      - name: Patch v14.5B direct TitleScreen boot switch
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PYDIRECT'
+          from pathlib import Path
+
+          p = Path("work/Butterscotch/src/runner.c")
+          s = p.read_text(encoding="utf-8")
+
+          old = "    int32_t firstRoomIndex = dataWin->gen8.roomOrder[0];\\n"
+          new = """    int32_t firstRoomIndex = dataWin->gen8.roomOrder[0];
+
+              /*
+               * FNAFR 3 iOS alternate boot:
+               * preserve global/extension init scripts, but skip
+               * StartupRoom + WarningScreen and initialize roomOrder[2].
+               */
+              const char* fnafrDirectTitle = getenv("FNAFR3_DIRECT_TITLE");
+              if (
+                  fnafrDirectTitle != nullptr
+                  && fnafrDirectTitle[0] == '1'
+                  && dataWin->gen8.roomOrderCount > 2
+              ) {
+                  firstRoomIndex = dataWin->gen8.roomOrder[2];
+                  logWarn(
+                      "FNAFR3: DIRECT TITLE BOOT -> room %d (%s)\\n",
+                      firstRoomIndex,
+                      dataWin->room.rooms[firstRoomIndex].name
+                  );
+              }
+          """
+
+          if old not in s:
+              raise SystemExit("Runner_initFirstRoom anchor changed")
+
+          s = s.replace(old, new, 1)
+          p.write_text(s, encoding="utf-8")
+          print("v14.5B direct-title runner patch applied")
+          PYDIRECT
 
       - name: Build CLI preflight and test parser
         shell: bash
@@ -1008,6 +1055,7 @@ jobs:
                   fprintf(stderr, "\n=== FNAFR3 iOS v14 launch ===\n");
                   setenv("FNAFR3_MODS_DIR", mods, 1);
                   setenv("FNAFR3_ASSETS_ROOT", "assets", 1);
+                  setenv("FNAFR3_DIRECT_TITLE", "1", 1);
 
                   signal(SIGABRT, write_crash_signal);
                   signal(SIGSEGV, write_crash_signal);
@@ -1201,17 +1249,17 @@ jobs:
           rm -f "$APP/embedded.mobileprovision"
 
           /usr/bin/zip -qry \
-            FNAFR-3-Mobile-iOS-v14.4-TITLESCREEN-REDIRECT-UNSIGNED.ipa \
+            FNAFR-3-Mobile-iOS-v14.5B-DIRECT-TITLE-UNSIGNED.ipa \
             Payload
 
-          ls -lh FNAFR-3-Mobile-iOS-v14.4-TITLESCREEN-REDIRECT-UNSIGNED.ipa
+          ls -lh FNAFR-3-Mobile-iOS-v14.5B-DIRECT-TITLE-UNSIGNED.ipa
 
       - name: Upload unsigned IPA
         if: steps.native_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-iOS-v14.4-TITLESCREEN-REDIRECT-UNSIGNED
-          path: FNAFR-3-Mobile-iOS-v14.4-TITLESCREEN-REDIRECT-UNSIGNED.ipa
+          name: FNAFR-3-Mobile-iOS-v14.5B-DIRECT-TITLE-UNSIGNED
+          path: FNAFR-3-Mobile-iOS-v14.5B-DIRECT-TITLE-UNSIGNED.ipa
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -1220,7 +1268,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-iOS-v14.4-Diagnostics
+          name: FNAFR-3-Mobile-iOS-v14.5B-Diagnostics
           path: output
           if-no-files-found: warn
           compression-level: 6
@@ -1237,5 +1285,5 @@ jobs:
             exit 1
           fi
 
-          test -f FNAFR-3-Mobile-iOS-v14.4-TITLESCREEN-REDIRECT-UNSIGNED.ipa
-          echo "SUCCESS: FNAFR-3-Mobile-iOS-v14.4-TITLESCREEN-REDIRECT-UNSIGNED.ipa created."
+          test -f FNAFR-3-Mobile-iOS-v14.5B-DIRECT-TITLE-UNSIGNED.ipa
+          echo "SUCCESS: FNAFR-3-Mobile-iOS-v14.5B-DIRECT-TITLE-UNSIGNED.ipa created."
