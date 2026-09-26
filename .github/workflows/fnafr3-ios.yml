@@ -1,4 +1,4 @@
-name: FNAFR 3 Mobile 1.4.5 iOS - CLEAN PORT v1
+name: FNAFR 3 Mobile 1.4.5 iOS - CLEAN PORT v1.1
 
 on:
   workflow_dispatch:
@@ -219,24 +219,7 @@ jobs:
 
           import yaml
 
-          TARGET_NAME = "FNAFR 3 iOS - v14.6 VERIFIED DIRECT TITLE"
-
-
-          def run_shell(name, script, check=True):
-              print()
-              print("=" * 76)
-              print("RUNNING:", name)
-              print("=" * 76)
-              result = subprocess.run(
-                  ["/bin/bash", "-c", script],
-                  env=os.environ.copy(),
-              )
-              if check and result.returncode != 0:
-                  raise subprocess.CalledProcessError(result.returncode, name)
-              return result.returncode
-
-
-          def find_base_workflow():
+          def collect_historical_steps():
               commits = subprocess.check_output(
                   [
                       "git", "log", "--all", "--format=%H", "--",
@@ -245,16 +228,21 @@ jobs:
                   text=True,
               ).splitlines()
 
+              collected = []
               checked = set()
 
               for commit in commits:
-                  paths = subprocess.check_output(
-                      [
-                          "git", "ls-tree", "-r", "--name-only", commit,
-                          ".github/workflows",
-                      ],
-                      text=True,
-                  ).splitlines()
+                  try:
+                      paths = subprocess.check_output(
+                          [
+                              "git", "ls-tree", "-r", "--name-only", commit,
+                              ".github/workflows",
+                          ],
+                          text=True,
+                          stderr=subprocess.DEVNULL,
+                      ).splitlines()
+                  except subprocess.CalledProcessError:
+                      continue
 
                   for path in paths:
                       if not path.endswith((".yml", ".yaml")):
@@ -266,58 +254,169 @@ jobs:
                       checked.add(key)
 
                       try:
-                          text = subprocess.check_output(
+                          workflow_text = subprocess.check_output(
                               ["git", "show", f"{commit}:{path}"],
                               text=True,
                               stderr=subprocess.DEVNULL,
                           )
-                      except subprocess.CalledProcessError:
+                          data = yaml.safe_load(workflow_text)
+                      except Exception:
                           continue
 
-                      if TARGET_NAME not in text:
+                      if not isinstance(data, dict):
                           continue
 
-                      data = yaml.safe_load(text)
-                      print("Found base workflow:", commit, path)
-                      Path("output/base-workflow.txt").write_text(
-                          f"{commit} {path}\n",
+                      jobs = data.get("jobs", {})
+                      if not isinstance(jobs, dict):
+                          continue
+
+                      for job_name, job in jobs.items():
+                          if not isinstance(job, dict):
+                              continue
+
+                          steps = job.get("steps", [])
+                          if not isinstance(steps, list):
+                              continue
+
+                          for step in steps:
+                              if not isinstance(step, dict):
+                                  continue
+
+                              script = step.get("run")
+                              if not isinstance(script, str) or not script.strip():
+                                  continue
+
+                              collected.append(
+                                  {
+                                      "commit": commit,
+                                      "path": path,
+                                      "job": job_name,
+                                      "name": str(step.get("name", "<unnamed>")),
+                                      "script": script,
+                                  }
+                              )
+
+              print("Historical runnable steps indexed:", len(collected))
+              if not collected:
+                  raise SystemExit(
+                      "ERROR: no historical GitHub Actions run steps were found"
+                  )
+              return collected
+
+
+          history_steps = collect_historical_steps()
+
+
+          def find_run(label, *needles):
+              wanted = [needle.lower() for needle in needles]
+
+              for item in history_steps:
+                  haystack = item["script"].lower()
+                  if all(needle in haystack for needle in wanted):
+                      print()
+                      print("Found reusable step for:", label)
+                      print("  commit:", item["commit"])
+                      print("  file:  ", item["path"])
+                      print("  step:  ", item["name"])
+
+                      Path("output/reused-steps.txt").open(
+                          "a",
                           encoding="utf-8",
+                      ).write(
+                          f"{label}: {item['commit']} {item['path']} :: {item['name']}\n"
                       )
-                      return data
+
+                      return item["script"]
+
+              print()
+              print("ERROR: reusable historical step not found:", label)
+              print("Required script markers:")
+              for needle in needles:
+                  print(" -", needle)
 
               raise SystemExit(
-                  "ERROR: old v14.6 FNAFR workflow was not found in git history"
+                  "ERROR: historical build step not found: " + label
               )
 
 
-          workflow = find_base_workflow()
-          steps = workflow["jobs"]["build"]["steps"]
+          clone_step = find_run(
+              "pinned Butterscotch + SDL2",
+              "ButterscotchRunner/Butterscotch.git",
+              "321487c9e4fce061a9b3d59e321a8432dc12c603",
+              "release-2.30.12",
+          )
 
+          room_step = find_run(
+              "GameMaker 2024.2 ROOM parser",
+              "parseROOM(",
+              "found2024_2",
+              "data_win.c",
+          )
 
-          def get_run(name_part):
-              needle = name_part.lower()
-              for step in steps:
-                  name = str(step.get("name", ""))
-                  if needle in name.lower() and step.get("run"):
-                      print("Using base step:", name)
-                      return step["run"]
-              raise SystemExit("ERROR: base step not found: " + name_part)
+          compat_step = find_run(
+              "external textures + VM + GLES",
+              "FNAFR_EXTERNAL_TEXTURE_PATHS",
+              "GL_OES_standard_derivatives",
+              "fnafr_external_textures.h",
+          )
+
+          preflight_step = find_run(
+              "CLI parser preflight",
+              "--print-rooms",
+              "build-preflight",
+              "BinaryReader: buffer read error",
+          )
+
+          ios_patch_step = find_run(
+              "iPhone bundle boot patch",
+              "ios_bootstrap.c",
+              "FNAFR3_DIRECT_TITLE",
+              "BUTTERSCOTCH_IOS",
+          )
+
+          configure_step = find_run(
+              "iOS arm64 configure",
+              "-DCMAKE_SYSTEM_NAME=iOS",
+              "-DCMAKE_OSX_ARCHITECTURES=arm64",
+              "work/build-ios",
+          )
+
+          native_step = find_run(
+              "native iPhone build",
+              "--target butterscotch",
+              "CODE_SIGNING_ALLOWED=NO",
+              "output/build.log",
+          )
+
+          error_step = find_run(
+              "compiler error extraction",
+              "error-summary.txt",
+              "Undefined symbols",
+              "output/build.log",
+          )
+
+          package_step = find_run(
+              "unsigned IPA packaging",
+              "Payload/FNAFR3.app",
+              "Info.plist",
+              "zip -qry",
+          )
 
 
           # 1) Same pinned runner/SDL that our previous iOS build used.
           run_shell(
               "Clone pinned Butterscotch runner and SDL2",
-              get_run("Clone pinned Butterscotch runner and SDL2"),
+              clone_step,
           )
 
           # 2) GameMaker 2024.2 ROOM parser compatibility.
           run_shell(
               "Patch GameMaker 2024.2 ROOM parser",
-              get_run("Patch GameMaker 2024.2 ROOM parser"),
+              room_step,
           )
 
           # 3) External yytex + VM shims + GLES derivative support.
-          compat = get_run("external textures + VM builtins")
+          compat = compat_step
 
           # Fix the natural-number sort typo from the old workflow so
           # texture_2 is ordered before texture_10.
@@ -337,7 +436,7 @@ jobs:
           )
 
           # 4) Make sure the new game.droid actually parses before iOS build.
-          preflight = get_run("Build CLI preflight and test parser")
+          preflight = preflight_step
           preflight = preflight.replace(
               "output/v14-preflight-",
               "output/1.4.5-preflight-",
@@ -346,7 +445,7 @@ jobs:
 
           # 5) iOS bundle boot/logging. Do NOT carry the old forced
           # direct-TitleScreen workaround into this fresh 1.4.5 build.
-          ios_patch = get_run("Patch Butterscotch for iPhone direct boot")
+          ios_patch = ios_patch_step
           ios_patch = ios_patch.replace(
               '                  setenv("FNAFR3_DIRECT_TITLE", "1", 1);\n',
               "",
@@ -360,29 +459,29 @@ jobs:
           # 6) Configure native arm64 iPhone build.
           run_shell(
               "Configure iOS arm64 build",
-              get_run("Configure iOS arm64 build"),
+              configure_step,
           )
 
           # 7) Native build. If it fails, extract the useful compiler errors
           # before failing this step so Diagnostics still contain them.
-          native = get_run("Build Butterscotch for iPhone")
+          native = native_step
           rc = run_shell("Build Butterscotch for iPhone", native, check=False)
 
           if rc != 0:
               try:
                   run_shell(
                       "Extract build errors",
-                      get_run("Extract build errors"),
+                      error_step,
                       check=False,
                   )
               finally:
                   raise SystemExit(f"Native iOS build failed with exit code {rc}")
 
           # 8) Reuse the known-good IPA packaging, but rename/version it for 1.4.5.
-          package = get_run("Package FNAFR 3 unsigned IPA")
+          package = package_step
           package = package.replace(
               "FNAFR-3-Mobile-iOS-v14.6-VERIFIED-DIRECT-TITLE-UNSIGNED.ipa",
-              "FNAFR-3-Mobile-1.4.5-iOS-v1-CLEAN-UNSIGNED.ipa",
+              "FNAFR-3-Mobile-1.4.5-iOS-v1.1-CLEAN-UNSIGNED.ipa",
           )
           package = package.replace(
               "<string>1.2</string>",
@@ -390,12 +489,12 @@ jobs:
           )
           package = package.replace(
               "<string>14</string>",
-              "<string>14501</string>",
+              "<string>14511</string>",
           )
 
           run_shell("Package Frickbear's 3 Mobile 1.4.5 IPA", package)
 
-          ipa = Path("FNAFR-3-Mobile-1.4.5-iOS-v1-CLEAN-UNSIGNED.ipa")
+          ipa = Path("FNAFR-3-Mobile-1.4.5-iOS-v1.1-CLEAN-UNSIGNED.ipa")
           if not ipa.is_file():
               raise SystemExit("ERROR: final 1.4.5 IPA was not created")
 
@@ -409,8 +508,8 @@ jobs:
       - name: Upload Frickbear's 3 Mobile 1.4.5 unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-1.4.5-iOS-v1-CLEAN-UNSIGNED
-          path: FNAFR-3-Mobile-1.4.5-iOS-v1-CLEAN-UNSIGNED.ipa
+          name: FNAFR-3-Mobile-1.4.5-iOS-v1.1-CLEAN-UNSIGNED
+          path: FNAFR-3-Mobile-1.4.5-iOS-v1.1-CLEAN-UNSIGNED.ipa
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -419,7 +518,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-1.4.5-iOS-v1-Diagnostics
+          name: FNAFR-3-Mobile-1.4.5-iOS-v1.1-Diagnostics
           path: output
           if-no-files-found: warn
           compression-level: 6
