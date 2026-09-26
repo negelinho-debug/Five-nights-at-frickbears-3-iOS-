@@ -1,4 +1,4 @@
-name: FNAFR 3 Mobile 1.4.5 iOS - CLEAN PORT v1.4
+name: FNAFR 3 Mobile 1.4.5 iOS - CLEAN PORT v1.5
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Frickbear's 3 Mobile 1.4.5 iOS v1.4
+    name: Build Frickbear's 3 Mobile 1.4.5 iOS v1.5
     runs-on: macos-14
     timeout-minutes: 90
 
@@ -252,23 +252,46 @@ jobs:
 
           p = Path("work/Butterscotch/src/data_win.c")
           s = p.read_text(encoding="utf-8")
+
           start = s.find("parseROOM(")
+
           if start < 0:
               raise SystemExit("parseROOM() not found")
 
           tail = s[start:]
-          m = re.search(r"\bfound2024_2\s*=\s*false\s*;", tail)
+
+          m = re.search(
+              r"\bfound2024_2\s*=\s*false\s*;",
+              tail
+          )
+
           if not m:
               raise SystemExit("found2024_2=false marker not found")
 
           a = start + m.start()
           b = start + m.end()
-          old = s[a:b]
-          new = re.sub(r"false", "true", old, count=1)
-          s = s[:a] + new + s[b:]
-          p.write_text(s, encoding="utf-8")
 
-          print("PATCHED:", old.strip(), "=>", new.strip())
+          old = s[a:b]
+          new = re.sub(
+              r"false",
+              "true",
+              old,
+              count=1
+          )
+
+          s = s[:a] + new + s[b:]
+
+          p.write_text(
+              s,
+              encoding="utf-8"
+          )
+
+          print(
+              "PATCHED:",
+              old.strip(),
+              "=>",
+              new.strip()
+          )
           PYROOM
 
       - name: Add 1.4.5 external textures + VM builtins + GLES fixes
@@ -284,33 +307,62 @@ jobs:
           root = Path("work/Butterscotch")
           assets = Path("work/apk/assets")
           game = assets / "game.droid"
+
           b = game.read_bytes()
 
           # ==========================================================
-          # EXTERNAL TEXTURE GROUPS (.yytex)
+          # EXTERNAL TEXTURE GROUPS
           # ==========================================================
 
           tgin = b.find(b"TGIN")
+
           if tgin < 0:
               raise SystemExit("TGIN chunk not found")
 
           p = tgin + 8
-          version = struct.unpack_from("<I", b, p)[0]
+
+          version = struct.unpack_from(
+              "<I",
+              b,
+              p
+          )[0]
+
           p += 4
-          group_count = struct.unpack_from("<I", b, p)[0]
+
+          group_count = struct.unpack_from(
+              "<I",
+              b,
+              p
+          )[0]
+
           p += 4
 
           group_ptrs = struct.unpack_from(
-              "<" + ("I" * group_count), b, p
+              "<" + ("I" * group_count),
+              b,
+              p
           )
 
           def cstr(off):
               if off == 0:
                   return ""
-              end = b.find(b"\0", off)
+
+              end = b.find(
+                  b"\0",
+                  off
+              )
+
               if end < 0:
-                  raise SystemExit("unterminated TGIN string")
-              return b[off:end].decode("utf-8", "replace")
+                  raise SystemExit(
+                      "unterminated TGIN string"
+                  )
+
+              return b[
+                  off:end
+              ].decode(
+                  "utf-8",
+                  "replace"
+              )
 
           mapping = {}
 
@@ -324,13 +376,30 @@ jobs:
                   sprites_ptr,
                   fonts_ptr,
                   tilesets_ptr,
-              ) = struct.unpack_from("<8I", b, gp)
+              ) = struct.unpack_from(
+                  "<8I",
+                  b,
+                  gp
+              )
 
-              name = cstr(name_ptr)
-              directory = cstr(dir_ptr)
-              extension = cstr(ext_ptr)
+              name = cstr(
+                  name_ptr
+              )
 
-              page_count = struct.unpack_from("<I", b, pages_ptr)[0]
+              directory = cstr(
+                  dir_ptr
+              )
+
+              extension = cstr(
+                  ext_ptr
+              )
+
+              page_count = struct.unpack_from(
+                  "<I",
+                  b,
+                  pages_ptr
+              )[0]
+
               pages = (
                   struct.unpack_from(
                       "<" + ("I" * page_count),
@@ -341,63 +410,113 @@ jobs:
                   else ()
               )
 
-              # GameMaker load_type 2 = external texture group.
               if load_type != 2:
                   continue
 
               if not directory:
                   raise SystemExit(
-                      "External texture group has no directory: " + name
+                      "External texture group has no directory: "
+                      + name
                   )
 
-              group_dir = assets / directory
+              group_dir = (
+                  assets
+                  / directory
+              )
+
               candidates = [
                   path
-                  for path in group_dir.iterdir()
+                  for path
+                  in group_dir.iterdir()
                   if path.is_file()
-                  and path.suffix.lower() == extension.lower()
+                  and path.suffix.lower()
+                  == extension.lower()
               ]
 
               def natural_texture_key(path):
-                  parts = re.split(r"(\d+)", path.name.lower())
+                  parts = re.split(
+                      r"(\d+)",
+                      path.name.lower()
+                  )
+
                   return [
-                      int(part) if part.isdigit() else part
-                      for part in parts
+                      int(part)
+                      if part.isdigit()
+                      else part
+                      for part
+                      in parts
                   ]
 
-              candidates.sort(key=natural_texture_key)
+              candidates.sort(
+                  key=natural_texture_key
+              )
 
               print(
                   f"External texture group {name}: "
-                  f"directory={directory} expected={page_count} "
+                  f"directory={directory} "
+                  f"expected={page_count} "
                   f"found={len(candidates)}"
               )
 
               if len(candidates) < page_count:
                   raise SystemExit(
-                      f"Texture group {name} ({directory}) expected "
-                      f"at least {page_count} files, found {len(candidates)}"
+                      f"Texture group {name} "
+                      f"({directory}) expected "
+                      f"at least {page_count} files, "
+                      f"found {len(candidates)}"
                   )
 
-              for index_in_group, page_id in enumerate(pages):
-                  rel = f"{directory}/{candidates[index_in_group].name}"
-                  full = assets / rel
+              for (
+                  index_in_group,
+                  page_id
+              ) in enumerate(pages):
+
+                  rel = (
+                      f"{directory}/"
+                      f"{candidates[index_in_group].name}"
+                  )
+
+                  full = (
+                      assets
+                      / rel
+                  )
+
                   if not full.is_file():
                       raise SystemExit(
-                          f"Missing external texture page {page_id}: {full}"
+                          f"Missing external texture "
+                          f"page {page_id}: {full}"
                       )
-                  mapping[page_id] = rel
 
-          print("TGIN version:", version)
-          print("External pages:", len(mapping))
+                  mapping[
+                      page_id
+                  ] = rel
+
+          print(
+              "TGIN version:",
+              version
+          )
+
+          print(
+              "External pages:",
+              len(mapping)
+          )
 
           if len(mapping) != 142:
               raise SystemExit(
-                  f"Expected 142 external pages, got {len(mapping)}"
+                  f"Expected 142 external pages, "
+                  f"got {len(mapping)}"
               )
 
-          max_slot = max(max(mapping) + 1, 512)
-          header = root / "src" / "fnafr_external_textures.h"
+          max_slot = max(
+              max(mapping) + 1,
+              512
+          )
+
+          header = (
+              root
+              / "src"
+              / "fnafr_external_textures.h"
+          )
 
           lines = [
               "#ifndef FNAFR_EXTERNAL_TEXTURES_H",
@@ -409,29 +528,81 @@ jobs:
               "static const char* FNAFR_EXTERNAL_TEXTURE_PATHS[FNAFR_EXTERNAL_TEXTURE_PATH_COUNT] = {",
           ]
 
-          for page_id in sorted(mapping):
-              rel = mapping[page_id].replace("\\", "\\\\").replace('"', '\\"')
-              lines.append(f'    [{page_id}] = "{rel}",')
+          for page_id in sorted(
+              mapping
+          ):
+              rel = (
+                  mapping[page_id]
+                  .replace(
+                      "\\",
+                      "\\\\"
+                  )
+                  .replace(
+                      '"',
+                      '\\"'
+                  )
+              )
 
-          lines += ["};", "", "#endif", ""]
-          header.write_text("\n".join(lines), encoding="utf-8")
+              lines.append(
+                  f'    [{page_id}] = "{rel}",'
+              )
 
-          Path("output/v14-external-textures.txt").write_text(
-              "\n".join(f"{k}: {mapping[k]}" for k in sorted(mapping)) + "\n",
-              encoding="utf-8",
+          lines += [
+              "};",
+              "",
+              "#endif",
+              ""
+          ]
+
+          header.write_text(
+              "\n".join(lines),
+              encoding="utf-8"
           )
 
-          data_win = root / "src" / "data_win.c"
-          s = data_win.read_text(encoding="utf-8")
+          Path(
+              "output/v15-external-textures.txt"
+          ).write_text(
+              "\n".join(
+                  f"{k}: {mapping[k]}"
+                  for k
+                  in sorted(mapping)
+              )
+              + "\n",
+              encoding="utf-8"
+          )
 
-          include_anchor = '#include "data_win.h"\n'
-          if '#include "fnafr_external_textures.h"' not in s:
+          # ==========================================================
+          # EXTERNAL TEXTURE LOADER
+          # ==========================================================
+
+          data_win = (
+              root
+              / "src"
+              / "data_win.c"
+          )
+
+          s = data_win.read_text(
+              encoding="utf-8"
+          )
+
+          include_anchor = (
+              '#include "data_win.h"\n'
+          )
+
+          if (
+              '#include "fnafr_external_textures.h"'
+              not in s
+          ):
               if include_anchor not in s:
-                  raise SystemExit("data_win.h include anchor missing")
+                  raise SystemExit(
+                      "data_win.h include anchor missing"
+                  )
+
               s = s.replace(
                   include_anchor,
-                  include_anchor + '#include "fnafr_external_textures.h"\n',
-                  1,
+                  include_anchor
+                  + '#include "fnafr_external_textures.h"\n',
+                  1
               )
 
           old = """    if (tex->blobOffset == 0 || tex->blobSize == 0) return;
@@ -439,7 +610,9 @@ jobs:
           """
 
           if old not in s:
-              raise SystemExit("TXTR lazy loader anchor changed")
+              raise SystemExit(
+                  "TXTR lazy loader anchor changed"
+              )
 
           new = r'''    /* FNAFR 3: load GameMaker external .yytex page. */
               if (tex->blobOffset == 0) {
@@ -450,10 +623,15 @@ jobs:
 
                       if (rel != nullptr) {
                           const char* assetsRoot = getenv("FNAFR3_ASSETS_ROOT");
-                          if (assetsRoot == nullptr || assetsRoot[0] == '\0')
+
+                          if (
+                              assetsRoot == nullptr
+                              || assetsRoot[0] == '\0'
+                          )
                               assetsRoot = "assets";
 
                           char externalPath[1024];
+
                           snprintf(
                               externalPath,
                               sizeof(externalPath),
@@ -462,15 +640,34 @@ jobs:
                               rel
                           );
 
-                          FILE* external = fopen(externalPath, "rb");
+                          FILE* external = fopen(
+                              externalPath,
+                              "rb"
+                          );
 
                           if (external != nullptr) {
-                              fseek(external, 0, SEEK_END);
-                              long size = ftell(external);
-                              fseek(external, 0, SEEK_SET);
+                              fseek(
+                                  external,
+                                  0,
+                                  SEEK_END
+                              );
+
+                              long size = ftell(
+                                  external
+                              );
+
+                              fseek(
+                                  external,
+                                  0,
+                                  SEEK_SET
+                              );
 
                               if (size > 0) {
-                                  tex->blobData = (uint8_t*)safeMalloc((size_t)size);
+                                  tex->blobData =
+                                      (uint8_t*)safeMalloc(
+                                          (size_t)size
+                                      );
+
                                   size_t got = fread(
                                       tex->blobData,
                                       1,
@@ -478,9 +675,17 @@ jobs:
                                       external
                                   );
 
-                                  if (got == (size_t)size) {
-                                      tex->blobSize = (uint32_t)size;
-                                      tex->mapped = false;
+                                  if (
+                                      got
+                                      ==
+                                      (size_t)size
+                                  ) {
+                                      tex->blobSize =
+                                          (uint32_t)size;
+
+                                      tex->mapped =
+                                          false;
+
                                       logInfo(
                                           "FNAFR3: external TXTR %u <- %s (%ld bytes)\n",
                                           textureId,
@@ -488,13 +693,21 @@ jobs:
                                           size
                                       );
                                   } else {
-                                      free(tex->blobData);
-                                      tex->blobData = nullptr;
-                                      tex->blobSize = 0;
+                                      free(
+                                          tex->blobData
+                                      );
+
+                                      tex->blobData =
+                                          nullptr;
+
+                                      tex->blobSize =
+                                          0;
                                   }
                               }
 
-                              fclose(external);
+                              fclose(
+                                  external
+                              );
                           } else {
                               logWarn(
                                   "FNAFR3: external texture missing: %s\n",
@@ -511,22 +724,42 @@ jobs:
               if (tex->blobData != nullptr) return;
           '''
 
-          s = s.replace(old, new, 1)
-          data_win.write_text(s, encoding="utf-8")
+          s = s.replace(
+              old,
+              new,
+              1
+          )
+
+          data_win.write_text(
+              s,
+              encoding="utf-8"
+          )
 
           # ==========================================================
-          # MISSING GAMEMAKER BUILTINS FROM v13 DEVICE LOG
+          # MISSING BUILTINS
           # ==========================================================
 
-          vm = root / "src" / "vm_builtins.c"
-          s = vm.read_text(encoding="utf-8")
+          vm = (
+              root
+              / "src"
+              / "vm_builtins.c"
+          )
 
-          reg_marker = "// ===[ REGISTRATION ]===\n"
+          s = vm.read_text(
+              encoding="utf-8"
+          )
+
+          reg_marker = (
+              "// ===[ REGISTRATION ]===\n"
+          )
+
           if reg_marker not in s:
-              raise SystemExit("VM registration marker missing")
+              raise SystemExit(
+                  "VM registration marker missing"
+              )
 
           shim = r'''
-          // ===[ FNAFR 3 iOS v14 COMPATIBILITY SHIMS ]===
+          // ===[ FNAFR 3 iOS 1.4.5 COMPATIBILITY SHIMS ]===
 
           static RValue fnafr_stub_zero(
               MAYBE_UNUSED VMContext* ctx,
@@ -551,7 +784,10 @@ jobs:
           ) {
               if (argCount < 1)
                   return RValue_makeBool(false);
-              return RValue_makeBool(RValue_toBool(args[0]));
+
+              return RValue_makeBool(
+                  RValue_toBool(args[0])
+              );
           }
 
           static RValue fnafr_builtin_json_stringify(
@@ -560,10 +796,18 @@ jobs:
               int32_t argCount
           ) {
               if (argCount < 1)
-                  return RValue_makeOwnedString(safeStrdup("{}"));
+                  return RValue_makeOwnedString(
+                      safeStrdup("{}")
+                  );
 
-              char* value = RValue_toString(args[0], ctx->dataWin);
-              return RValue_makeOwnedString(value);
+              char* value = RValue_toString(
+                  args[0],
+                  ctx->dataWin
+              );
+
+              return RValue_makeOwnedString(
+                  value
+              );
           }
 
           static RValue fnafr_date_current_datetime(
@@ -571,18 +815,39 @@ jobs:
               MAYBE_UNUSED RValue* args,
               MAYBE_UNUSED int32_t argCount
           ) {
-              return RValue_makeReal((GMLReal)time(nullptr));
+              return RValue_makeReal(
+                  (GMLReal)time(nullptr)
+              );
           }
 
-          static struct tm fnafr_date_tm(RValue* args, int32_t argCount) {
-              time_t t = time(nullptr);
+          static struct tm fnafr_date_tm(
+              RValue* args,
+              int32_t argCount
+          ) {
+              time_t t =
+                  time(nullptr);
+
               if (argCount > 0)
-                  t = (time_t)RValue_toReal(args[0]);
+                  t = (
+                      time_t
+                  )RValue_toReal(
+                      args[0]
+                  );
 
               struct tm result;
-              memset(&result, 0, sizeof(result));
-              struct tm* src = localtime(&t);
-              if (src != nullptr) result = *src;
+
+              memset(
+                  &result,
+                  0,
+                  sizeof(result)
+              );
+
+              struct tm* src =
+                  localtime(&t);
+
+              if (src != nullptr)
+                  result = *src;
+
               return result;
           }
 
@@ -591,8 +856,18 @@ jobs:
               RValue* args,
               int32_t argCount
           ) {
-              struct tm tmv = fnafr_date_tm(args, argCount);
-              return RValue_makeReal((GMLReal)(tmv.tm_year + 1900));
+              struct tm tmv =
+                  fnafr_date_tm(
+                      args,
+                      argCount
+                  );
+
+              return RValue_makeReal(
+                  (GMLReal)(
+                      tmv.tm_year
+                      + 1900
+                  )
+              );
           }
 
           static RValue fnafr_date_get_month(
@@ -600,8 +875,18 @@ jobs:
               RValue* args,
               int32_t argCount
           ) {
-              struct tm tmv = fnafr_date_tm(args, argCount);
-              return RValue_makeReal((GMLReal)(tmv.tm_mon + 1));
+              struct tm tmv =
+                  fnafr_date_tm(
+                      args,
+                      argCount
+                  );
+
+              return RValue_makeReal(
+                  (GMLReal)(
+                      tmv.tm_mon
+                      + 1
+                  )
+              );
           }
 
           static RValue fnafr_date_get_day(
@@ -609,8 +894,15 @@ jobs:
               RValue* args,
               int32_t argCount
           ) {
-              struct tm tmv = fnafr_date_tm(args, argCount);
-              return RValue_makeReal((GMLReal)tmv.tm_mday);
+              struct tm tmv =
+                  fnafr_date_tm(
+                      args,
+                      argCount
+                  );
+
+              return RValue_makeReal(
+                  (GMLReal)tmv.tm_mday
+              );
           }
 
           static RValue fnafr_virtual_key_add(
@@ -619,12 +911,19 @@ jobs:
               MAYBE_UNUSED int32_t argCount
           ) {
               static int32_t nextVirtualKey = 1;
-              return RValue_makeInt32(nextVirtualKey++);
+
+              return RValue_makeInt32(
+                  nextVirtualKey++
+              );
           }
 
           '''
 
-          s = s.replace(reg_marker, shim + reg_marker, 1)
+          s = s.replace(
+              reg_marker,
+              shim + reg_marker,
+              1
+          )
 
           anchor = (
               "    const bool isGMS2 = "
@@ -632,7 +931,9 @@ jobs:
           )
 
           if anchor not in s:
-              raise SystemExit("VM register anchor changed")
+              raise SystemExit(
+                  "VM register anchor changed"
+              )
 
           registrations = r'''
 
@@ -656,81 +957,162 @@ jobs:
               VM_registerBuiltin(ctx, "gc_collect", fnafr_stub_undefined);
           '''
 
-          s = s.replace(anchor, anchor + registrations, 1)
-          vm.write_text(s, encoding="utf-8")
-
-          # ==========================================================
-          # GLES2 STANDARD DERIVATIVES FOR fwidth()
-          # ==========================================================
-
-          gl = root / "src" / "gl" / "gl_renderer.c"
-          s = gl.read_text(encoding="utf-8")
-
-          # Exact declaration block verified against pinned Butterscotch
-          # commit 321487c9e4fce061a9b3d59e321a8432dc12c603.
-          small_anchor = (
-              "        char* patchedVertexSource = nullptr;\\n"
-              "        char* patchedFragmentSource = nullptr;\\n"
-              "\\n"
+          s = s.replace(
+              anchor,
+              anchor + registrations,
+              1
           )
 
-          if small_anchor not in s:
-              Path("output/v14.6-gl-renderer-current.c").write_text(
+          vm.write_text(
+              s,
+              encoding="utf-8"
+          )
+
+          # ==========================================================
+          # GLES STANDARD DERIVATIVES
+          # v1.5: fixed real newline anchor
+          # ==========================================================
+
+          gl = (
+              root
+              / "src"
+              / "gl"
+              / "gl_renderer.c"
+          )
+
+          s = gl.read_text(
+              encoding="utf-8"
+          )
+
+          shader_anchor = (
+              "        char* patchedFragmentSource = nullptr;\n"
+          )
+
+          if shader_anchor not in s:
+              Path(
+                  "output/v1.5-gl-renderer-current.c"
+              ).write_text(
                   s,
-                  encoding="utf-8",
+                  encoding="utf-8"
               )
-              raise SystemExit("verified GL shader declaration block not found")
+
+              raise SystemExit(
+                  "GL shader declaration anchor not found"
+              )
 
           derivatives = r'''
               /*
-               * GameMaker GLSLES SDF shaders in FNAFR 3 use fwidth().
-               * Some start directly with precision mediump float; and have
-               * no #version line, so prepend the derivative extension there.
+               * GameMaker GLSLES shaders may use fwidth().
+               * Enable the derivative extension on GLES when required.
                */
               if (
                   modernGl->isGLES
                   && fragmentShaderSource != nullptr
-                  && strstr(fragmentShaderSource, "fwidth") != nullptr
-                  && strstr(fragmentShaderSource, "GL_OES_standard_derivatives") == nullptr
+                  && strstr(
+                      fragmentShaderSource,
+                      "fwidth"
+                  ) != nullptr
+                  && strstr(
+                      fragmentShaderSource,
+                      "GL_OES_standard_derivatives"
+                  ) == nullptr
               ) {
                   const char* ext =
                       "#extension GL_OES_standard_derivatives : enable\n";
-                  const char* newline = strchr(fragmentShaderSource, '\n');
-                  bool hasVersion =
-                      strncmp(fragmentShaderSource, "#version", 8) == 0;
 
-                  if (hasVersion && newline != nullptr) {
+                  const char* newline =
+                      strchr(
+                          fragmentShaderSource,
+                          '\n'
+                      );
+
+                  bool hasVersion =
+                      strncmp(
+                          fragmentShaderSource,
+                          "#version",
+                          8
+                      ) == 0;
+
+                  if (
+                      hasVersion
+                      && newline != nullptr
+                  ) {
                       size_t firstLen =
-                          (size_t)(newline - fragmentShaderSource) + 1;
-                      size_t extLen = strlen(ext);
-                      size_t restLen = strlen(newline + 1);
+                          (size_t)(
+                              newline
+                              - fragmentShaderSource
+                          )
+                          + 1;
+
+                      size_t extLen =
+                          strlen(ext);
+
+                      size_t restLen =
+                          strlen(
+                              newline + 1
+                          );
 
                       patchedFragmentSource =
-                          (char*)safeMalloc(firstLen + extLen + restLen + 1);
+                          (char*)safeMalloc(
+                              firstLen
+                              + extLen
+                              + restLen
+                              + 1
+                          );
 
-                      memcpy(patchedFragmentSource, fragmentShaderSource, firstLen);
-                      memcpy(patchedFragmentSource + firstLen, ext, extLen);
                       memcpy(
-                          patchedFragmentSource + firstLen + extLen,
+                          patchedFragmentSource,
+                          fragmentShaderSource,
+                          firstLen
+                      );
+
+                      memcpy(
+                          patchedFragmentSource
+                              + firstLen,
+                          ext,
+                          extLen
+                      );
+
+                      memcpy(
+                          patchedFragmentSource
+                              + firstLen
+                              + extLen,
                           newline + 1,
                           restLen + 1
                       );
                   } else {
-                      size_t extLen = strlen(ext);
-                      size_t srcLen = strlen(fragmentShaderSource);
+                      size_t extLen =
+                          strlen(ext);
+
+                      size_t srcLen =
+                          strlen(
+                              fragmentShaderSource
+                          );
 
                       patchedFragmentSource =
-                          (char*)safeMalloc(extLen + srcLen + 1);
+                          (char*)safeMalloc(
+                              extLen
+                              + srcLen
+                              + 1
+                          );
 
-                      memcpy(patchedFragmentSource, ext, extLen);
                       memcpy(
-                          patchedFragmentSource + extLen,
+                          patchedFragmentSource,
+                          ext,
+                          extLen
+                      );
+
+                      memcpy(
+                          patchedFragmentSource
+                              + extLen,
                           fragmentShaderSource,
                           srcLen + 1
                       );
                   }
 
-                  fragmentShaderSource = patchedFragmentSource;
+                  fragmentShaderSource =
+                      patchedFragmentSource;
+
                   logInfo(
                       "FNAFR3: derivatives enabled for %s\n",
                       shdr->name
@@ -739,18 +1121,32 @@ jobs:
 
           '''
 
-          s = s.replace(small_anchor, small_anchor + derivatives, 1)
-          gl.write_text(s, encoding="utf-8")
+          s = s.replace(
+              shader_anchor,
+              shader_anchor
+              + "\n"
+              + derivatives,
+              1
+          )
 
-          Path("output/v14-compat-summary.txt").write_text(
-              "FNAFR 3 Mobile 1.4.5 v1.4 compatibility\n"
+          gl.write_text(
+              s,
+              encoding="utf-8"
+          )
+
+          Path(
+              "output/v15-compat-summary.txt"
+          ).write_text(
+              "FNAFR 3 Mobile 1.4.5 v1.5 compatibility\n"
               f"external_texture_pages={len(mapping)}\n"
               "vm_builtins=patched\n"
               "gles_standard_derivatives=patched\n",
-              encoding="utf-8",
+              encoding="utf-8"
           )
 
-          print("1.4.5 v1.4 compatibility patches applied")
+          print(
+              "1.4.5 v1.5 compatibility patches applied"
+          )
           PYV14
 
       - name: Build CLI preflight and test parser
@@ -771,36 +1167,41 @@ jobs:
             -DENABLE_WAD17=ON \
             -DENABLE_ASAN=OFF \
             -DENABLE_VM_STUB_LOGS=ON \
-            2>&1 | tee output/1.4.5-v1.4-preflight-configure.log
+            2>&1 | tee output/1.4.5-v1.5-preflight-configure.log
 
           cmake --build work/build-preflight -j 4 \
-            2>&1 | tee output/1.4.5-v1.4-preflight-build.log
+            2>&1 | tee output/1.4.5-v1.5-preflight-build.log
 
           test -x work/build-preflight/butterscotch
 
           work/build-preflight/butterscotch \
             --print-rooms \
             work/apk/assets/game.droid \
-            > output/1.4.5-v1.4-preflight-parser.log 2>&1
+            > output/1.4.5-v1.5-preflight-parser.log 2>&1
 
           if grep -Fq "BinaryReader: buffer read error" \
-            output/1.4.5-v1.4-preflight-parser.log; then
+            output/1.4.5-v1.5-preflight-parser.log; then
             echo "ERROR: ROOM parser still broken"
-            tail -300 output/1.4.5-v1.4-preflight-parser.log
+            tail -300 output/1.4.5-v1.5-preflight-parser.log
             exit 1
           fi
 
-          tail -120 output/1.4.5-v1.4-preflight-parser.log
+          tail -120 output/1.4.5-v1.5-preflight-parser.log
 
       - name: Disassemble WarningScreen Create for diagnostics
         shell: bash
         run: |
           set +e
+
           work/build-preflight/butterscotch \
             --disassemble gml_Object_oWarningScreen_Create_0 \
             work/apk/assets/game.droid \
-            > output/1.4.5-v1.4-warning-create-disasm.log 2>&1
-          tail -220 output/1.4.5-v1.4-warning-create-disasm.log || true
+            > output/1.4.5-v1.5-warning-create-disasm.log 2>&1
+
+          tail -220 \
+            output/1.4.5-v1.5-warning-create-disasm.log \
+            || true
+
           exit 0
 
       - name: 1.4.5 headless VM smoke test
@@ -819,17 +1220,25 @@ jobs:
             --headless \
             --exit-at-frame 300 \
             work/apk/assets/game.droid \
-            > output/1.4.5-v1.4-headless.log 2>&1
+            > output/1.4.5-v1.5-headless.log 2>&1
 
-          echo "$?" > output/1.4.5-v1.4-headless-exit.txt
+          echo "$?" \
+            > output/1.4.5-v1.5-headless-exit.txt
 
           echo "===== HEADLESS TAIL ====="
-          tail -250 output/1.4.5-v1.4-headless.log || true
+
+          tail -250 \
+            output/1.4.5-v1.5-headless.log \
+            || true
 
           echo "===== UNKNOWN FUNCTIONS ====="
-          grep -F 'Unknown function' output/1.4.5-v1.4-headless.log \
+
+          grep -F \
+            'Unknown function' \
+            output/1.4.5-v1.5-headless.log \
             | sort -u \
-            | tee output/1.4.5-v1.4-unknown-functions.txt \
+            | tee \
+              output/1.4.5-v1.5-unknown-functions.txt \
             || true
 
           exit 0
@@ -843,12 +1252,29 @@ jobs:
           from pathlib import Path
           import re
 
-          root = Path("work/Butterscotch")
-          cmake = root / "CMakeLists.txt"
-          s = cmake.read_text(encoding="utf-8")
+          root = Path(
+              "work/Butterscotch"
+          )
 
-          cli_main = root / "src" / "cli" / "main.c"
-          cli = cli_main.read_text(encoding="utf-8")
+          cmake = (
+              root
+              / "CMakeLists.txt"
+          )
+
+          s = cmake.read_text(
+              encoding="utf-8"
+          )
+
+          cli_main = (
+              root
+              / "src"
+              / "cli"
+              / "main.c"
+          )
+
+          cli = cli_main.read_text(
+              encoding="utf-8"
+          )
 
           main_marker = """int main(int argc, char* argv[]) {
               setbuf(stderr, NULL);
@@ -873,10 +1299,20 @@ jobs:
           """
 
           if main_marker not in cli:
-              raise SystemExit("CLI main marker changed")
+              raise SystemExit(
+                  "CLI main marker changed"
+              )
 
-          cli = cli.replace(main_marker, direct_boot_main, 1)
-          cli_main.write_text(cli, encoding="utf-8")
+          cli = cli.replace(
+              main_marker,
+              direct_boot_main,
+              1
+          )
+
+          cli_main.write_text(
+              cli,
+              encoding="utf-8"
+          )
 
           s, n = re.subn(
               r'project\s*\(\s*butterscotch\s+C(?:\s+OBJC)?\s*\)',
@@ -885,52 +1321,100 @@ jobs:
               '    set(BUTTERSCOTCH_IOS ON)\n'
               'endif()',
               s,
-              count=1,
+              count=1
           )
+
           if n != 1:
-              raise SystemExit("Could not patch project()")
+              raise SystemExit(
+                  "Could not patch project()"
+              )
 
           sdl_pattern = re.compile(
               r'elseif\s*\(\s*BACKEND\s+STREQUAL\s+"sdl2"\s*\)'
               r'.*?'
               r'(?=elseif\s*\(\s*BACKEND\s+STREQUAL\s+"sdl3"\s*\))',
-              re.S,
+              re.S
           )
 
           sdl_replacement = '''elseif(BACKEND STREQUAL "sdl2")
               add_compile_definitions(USE_SDL2)
+
               if(BUTTERSCOTCH_IOS)
                   set(SDL_SHARED OFF CACHE BOOL "" FORCE)
                   set(SDL_STATIC ON CACHE BOOL "" FORCE)
                   set(SDL_TEST OFF CACHE BOOL "" FORCE)
                   set(SDL_TESTS OFF CACHE BOOL "" FORCE)
                   set(SDL_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
-                  add_subdirectory(vendor/SDL EXCLUDE_FROM_ALL)
+
+                  add_subdirectory(
+                      vendor/SDL
+                      EXCLUDE_FROM_ALL
+                  )
+
                   target_include_directories(
                       butterscotch
                       PRIVATE
                       ${CMAKE_SOURCE_DIR}/vendor/SDL/include
                   )
-                  set(BACKEND_LIBRARIES SDL2::SDL2-static SDL2::SDL2main)
+
+                  set(
+                      BACKEND_LIBRARIES
+                      SDL2::SDL2-static
+                      SDL2::SDL2main
+                  )
               else()
-                  find_package(PkgConfig REQUIRED)
-                  pkg_check_modules(SDL2 REQUIRED sdl2)
-                  target_include_directories(butterscotch PRIVATE ${SDL2_INCLUDE_DIRS})
-                  target_link_directories(butterscotch PRIVATE ${SDL2_LIBRARY_DIRS})
-                  set(BACKEND_LIBRARIES ${SDL2_LIBRARIES})
+                  find_package(
+                      PkgConfig
+                      REQUIRED
+                  )
+
+                  pkg_check_modules(
+                      SDL2
+                      REQUIRED
+                      sdl2
+                  )
+
+                  target_include_directories(
+                      butterscotch
+                      PRIVATE
+                      ${SDL2_INCLUDE_DIRS}
+                  )
+
+                  target_link_directories(
+                      butterscotch
+                      PRIVATE
+                      ${SDL2_LIBRARY_DIRS}
+                  )
+
+                  set(
+                      BACKEND_LIBRARIES
+                      ${SDL2_LIBRARIES}
+                  )
               endif()
           '''
 
-          s, n = sdl_pattern.subn(sdl_replacement, s, count=1)
-          if n != 1:
-              raise SystemExit("Could not patch SDL2 backend")
+          s, n = sdl_pattern.subn(
+              sdl_replacement,
+              s,
+              count=1
+          )
 
-          audio_marker = 'file(GLOB AUDIO_SOURCES src/audio/miniaudio/*.c)'
+          if n != 1:
+              raise SystemExit(
+                  "Could not patch SDL2 backend"
+              )
+
+          audio_marker = (
+              'file(GLOB AUDIO_SOURCES '
+              'src/audio/miniaudio/*.c)'
+          )
+
           audio_replacement = '''file(GLOB AUDIO_SOURCES src/audio/miniaudio/*.c)
               if(BUTTERSCOTCH_IOS)
                   enable_language(OBJC)
+
                   foreach(_audio_src IN LISTS AUDIO_SOURCES)
-                      if(_audio_src MATCHES "ma_audio_system\\.c$")
+                      if(_audio_src MATCHES "ma_audio_system\\\\.c$")
                           set_source_files_properties(
                               "${_audio_src}"
                               PROPERTIES LANGUAGE OBJC
@@ -940,13 +1424,28 @@ jobs:
               endif()'''
 
           if audio_marker not in s:
-              raise SystemExit("miniaudio marker missing")
-          s = s.replace(audio_marker, audio_replacement, 1)
+              raise SystemExit(
+                  "miniaudio marker missing"
+              )
 
-          anchor = 'if(BACKEND STREQUAL "glfw3")'
-          pos = s.find(anchor)
+          s = s.replace(
+              audio_marker,
+              audio_replacement,
+              1
+          )
+
+          anchor = (
+              'if(BACKEND STREQUAL "glfw3")'
+          )
+
+          pos = s.find(
+              anchor
+          )
+
           if pos < 0:
-              raise SystemExit("CLI backend anchor missing")
+              raise SystemExit(
+                  "CLI backend anchor missing"
+              )
 
           ios_block = r'''
               if(BUTTERSCOTCH_IOS)
@@ -962,6 +1461,7 @@ jobs:
                       "-framework AVFoundation"
                       "-framework CoreAudio"
                   )
+
                   target_sources(
                       butterscotch
                       PRIVATE
@@ -971,10 +1471,22 @@ jobs:
 
           '''
 
-          s = s[:pos] + ios_block + s[pos:]
-          cmake.write_text(s, encoding="utf-8")
+          s = (
+              s[:pos]
+              + ios_block
+              + s[pos:]
+          )
 
-          (root / "ios_bootstrap.c").write_text(r'''
+          cmake.write_text(
+              s,
+              encoding="utf-8"
+          )
+
+          (
+              root
+              / "ios_bootstrap.c"
+          ).write_text(
+          r'''
           #include <mach-o/dyld.h>
           #include <fcntl.h>
           #include <limits.h>
@@ -989,88 +1501,232 @@ jobs:
           static char g_log_path[PATH_MAX];
           static char g_crash_path[PATH_MAX];
 
-          static void make_dir_if_needed(const char *path)
+          static void make_dir_if_needed(
+              const char *path
+          )
           {
-              if (path != NULL && path[0] != '\0')
-                  mkdir(path, 0755);
+              if (
+                  path != NULL
+                  && path[0] != '\0'
+              )
+                  mkdir(
+                      path,
+                      0755
+                  );
           }
 
-          static void write_crash_signal(int sig)
+          static void write_crash_signal(
+              int sig
+          )
           {
               int fd = open(
                   g_crash_path,
-                  O_WRONLY | O_CREAT | O_APPEND,
+                  O_WRONLY
+                      | O_CREAT
+                      | O_APPEND,
                   0644
               );
 
               if (fd >= 0)
               {
                   char buf[64];
-                  int n = snprintf(buf, sizeof(buf), "signal=%d\n", sig);
-                  if (n > 0) write(fd, buf, (size_t)n);
+
+                  int n = snprintf(
+                      buf,
+                      sizeof(buf),
+                      "signal=%d\n",
+                      sig
+                  );
+
+                  if (n > 0)
+                      write(
+                          fd,
+                          buf,
+                          (size_t)n
+                      );
+
                   close(fd);
               }
 
-              signal(sig, SIG_DFL);
-              raise(sig);
+              signal(
+                  sig,
+                  SIG_DFL
+              );
+
+              raise(
+                  sig
+              );
           }
 
           __attribute__((constructor))
           static void FNAFR3_DirectBoot(void)
           {
-              const char *home = getenv("HOME");
+              const char *home =
+                  getenv(
+                      "HOME"
+                  );
 
               if (home != NULL)
               {
                   char documents[PATH_MAX];
                   char mods[PATH_MAX];
 
-                  snprintf(documents, sizeof(documents), "%s/Documents", home);
-                  snprintf(mods, sizeof(mods), "%s/Documents/Mods", home);
-                  snprintf(g_log_path, sizeof(g_log_path), "%s/Documents/FNAFR3-runtime.log", home);
-                  snprintf(g_crash_path, sizeof(g_crash_path), "%s/Documents/FNAFR3-crash.txt", home);
+                  snprintf(
+                      documents,
+                      sizeof(documents),
+                      "%s/Documents",
+                      home
+                  );
 
-                  make_dir_if_needed(documents);
-                  make_dir_if_needed(mods);
+                  snprintf(
+                      mods,
+                      sizeof(mods),
+                      "%s/Documents/Mods",
+                      home
+                  );
 
-                  freopen(g_log_path, "a", stdout);
-                  freopen(g_log_path, "a", stderr);
-                  setvbuf(stdout, NULL, _IONBF, 0);
-                  setvbuf(stderr, NULL, _IONBF, 0);
+                  snprintf(
+                      g_log_path,
+                      sizeof(g_log_path),
+                      "%s/Documents/FNAFR3-runtime.log",
+                      home
+                  );
 
-                  fprintf(stderr, "\n=== FNAFR3 Mobile 1.4.5 iOS v1.4 launch ===\n");
-                  setenv("FNAFR3_MODS_DIR", mods, 1);
-                  setenv("FNAFR3_ASSETS_ROOT", "assets", 1);
+                  snprintf(
+                      g_crash_path,
+                      sizeof(g_crash_path),
+                      "%s/Documents/FNAFR3-crash.txt",
+                      home
+                  );
 
-                  signal(SIGABRT, write_crash_signal);
-                  signal(SIGSEGV, write_crash_signal);
-                  signal(SIGBUS,  write_crash_signal);
-                  signal(SIGILL,  write_crash_signal);
-                  signal(SIGFPE,  write_crash_signal);
+                  make_dir_if_needed(
+                      documents
+                  );
+
+                  make_dir_if_needed(
+                      mods
+                  );
+
+                  freopen(
+                      g_log_path,
+                      "a",
+                      stdout
+                  );
+
+                  freopen(
+                      g_log_path,
+                      "a",
+                      stderr
+                  );
+
+                  setvbuf(
+                      stdout,
+                      NULL,
+                      _IONBF,
+                      0
+                  );
+
+                  setvbuf(
+                      stderr,
+                      NULL,
+                      _IONBF,
+                      0
+                  );
+
+                  fprintf(
+                      stderr,
+                      "\n=== FNAFR3 Mobile 1.4.5 iOS v1.5 launch ===\n"
+                  );
+
+                  setenv(
+                      "FNAFR3_MODS_DIR",
+                      mods,
+                      1
+                  );
+
+                  setenv(
+                      "FNAFR3_ASSETS_ROOT",
+                      "assets",
+                      1
+                  );
+
+                  signal(
+                      SIGABRT,
+                      write_crash_signal
+                  );
+
+                  signal(
+                      SIGSEGV,
+                      write_crash_signal
+                  );
+
+                  signal(
+                      SIGBUS,
+                      write_crash_signal
+                  );
+
+                  signal(
+                      SIGILL,
+                      write_crash_signal
+                  );
+
+                  signal(
+                      SIGFPE,
+                      write_crash_signal
+                  );
               }
 
-              setenv("SDL_RENDER_VSYNC", "1", 1);
+              setenv(
+                  "SDL_RENDER_VSYNC",
+                  "1",
+                  1
+              );
 
               char path[PATH_MAX];
-              uint32_t size = (uint32_t)sizeof(path);
 
-              if (_NSGetExecutablePath(path, &size) != 0)
+              uint32_t size =
+                  (uint32_t)sizeof(path);
+
+              if (
+                  _NSGetExecutablePath(
+                      path,
+                      &size
+                  ) != 0
+              )
                   return;
 
-              path[sizeof(path) - 1] = '\0';
+              path[
+                  sizeof(path) - 1
+              ] = '\0';
 
-              char *slash = strrchr(path, '/');
+              char *slash =
+                  strrchr(
+                      path,
+                      '/'
+                  );
+
               if (slash != NULL)
               {
                   *slash = '\0';
-                  chdir(path);
+
+                  chdir(
+                      path
+                  );
               }
 
-              fprintf(stderr, "bundle_cwd=%s\n", path);
+              fprintf(
+                  stderr,
+                  "bundle_cwd=%s\n",
+                  path
+              );
           }
-          ''', encoding="utf-8")
+          ''',
+              encoding="utf-8"
+          )
 
-          print("iOS direct-boot patch applied")
+          print(
+              "iOS direct-boot patch applied"
+          )
           PYIOS
 
       - name: Configure iOS arm64 build
@@ -1121,7 +1777,10 @@ jobs:
             2>&1 | tee output/build.log
 
           RC=${PIPESTATUS[0]}
-          echo "$RC" > output/build-exit-code.txt
+
+          echo "$RC" \
+            > output/build-exit-code.txt
+
           exit "$RC"
 
       - name: Extract build errors
@@ -1129,13 +1788,17 @@ jobs:
         shell: bash
         run: |
           set +e
+
           grep -E \
             'error:|fatal error:|Undefined symbols|ld: |CMake Error|FAILED:' \
             output/build.log \
             | tail -800 \
-            > output/error-summary.txt || true
+            > output/error-summary.txt \
+            || true
 
-          cat output/error-summary.txt || true
+          cat \
+            output/error-summary.txt \
+            || true
 
       - name: Package Frickbear's 3 Mobile 1.4.5 unsigned IPA
         if: steps.native_build.outcome == 'success'
@@ -1158,23 +1821,51 @@ jobs:
           fi
 
           APP="$PWD/Payload/FNAFR3.app"
-          mkdir -p "$APP"
 
-          cp "$BIN" "$APP/FNAFR3"
-          chmod +x "$APP/FNAFR3"
-          cp -R work/apk/assets "$APP/assets"
+          mkdir -p \
+            "$APP"
 
-          test -f "$APP/assets/game.droid"
-          YYTEX_COUNT="$(find "$APP/assets" -type f -name '*.yytex' | wc -l | tr -d ' ')"
-          echo "Packaged yytex files: $YYTEX_COUNT"
+          cp \
+            "$BIN" \
+            "$APP/FNAFR3"
+
+          chmod +x \
+            "$APP/FNAFR3"
+
+          cp -R \
+            work/apk/assets \
+            "$APP/assets"
+
+          test -f \
+            "$APP/assets/game.droid"
+
+          YYTEX_COUNT="$(
+            find "$APP/assets" \
+              -type f \
+              -name '*.yytex' \
+              | wc -l \
+              | tr -d ' '
+          )"
+
+          echo \
+            "Packaged yytex files: $YYTEX_COUNT"
+
           if [ "$YYTEX_COUNT" -lt 142 ]; then
             echo "ERROR: fewer than 142 external texture pages were packaged"
             exit 1
           fi
 
-          find "$APP/assets" -maxdepth 1 -type f \
-            \( -iname '*.dll' -o -iname '*.exe' \) \
-            -delete || true
+          find \
+            "$APP/assets" \
+            -maxdepth 1 \
+            -type f \
+            \( \
+              -iname '*.dll' \
+              -o \
+              -iname '*.exe' \
+            \) \
+            -delete \
+            || true
 
           cat > "$APP/Info.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
@@ -1184,39 +1875,55 @@ jobs:
           <dict>
             <key>CFBundleDisplayName</key>
             <string>Frickbear's 3</string>
+
             <key>CFBundleExecutable</key>
             <string>FNAFR3</string>
+
             <key>CFBundleIdentifier</key>
             <string>com.frickbears3.ios.port</string>
+
             <key>CFBundleInfoDictionaryVersion</key>
             <string>6.0</string>
+
             <key>CFBundleName</key>
             <string>Frickbears3</string>
+
             <key>CFBundlePackageType</key>
             <string>APPL</string>
+
             <key>CFBundleShortVersionString</key>
             <string>1.4.5</string>
+
             <key>CFBundleVersion</key>
-            <string>14514</string>
+            <string>14515</string>
+
             <key>LSRequiresIPhoneOS</key>
             <true/>
+
             <key>MinimumOSVersion</key>
             <string>15.0</string>
+
             <key>UIApplicationSupportsIndirectInputEvents</key>
             <true/>
+
             <key>UIRequiresFullScreen</key>
             <true/>
+
             <key>UIFileSharingEnabled</key>
             <true/>
+
             <key>LSSupportsOpeningDocumentsInPlace</key>
             <true/>
+
             <key>CADisableMinimumFrameDurationOnPhone</key>
             <true/>
+
             <key>UISupportedInterfaceOrientations</key>
             <array>
               <string>UIInterfaceOrientationLandscapeLeft</string>
               <string>UIInterfaceOrientationLandscapeRight</string>
             </array>
+
             <key>CFBundleIcons</key>
             <dict>
               <key>CFBundlePrimaryIcon</key>
@@ -1231,25 +1938,41 @@ jobs:
           </plist>
           PLIST
 
-          ICON="$(cat output/icon-path.txt)"
-          sips -z 120 120 "$ICON" --out "$APP/Icon-60@2x.png" >/dev/null
-          sips -z 180 180 "$ICON" --out "$APP/Icon-60@3x.png" >/dev/null
+          ICON="$(
+            cat output/icon-path.txt
+          )"
 
-          rm -rf "$APP/_CodeSignature"
-          rm -f "$APP/embedded.mobileprovision"
+          sips \
+            -z 120 120 \
+            "$ICON" \
+            --out "$APP/Icon-60@2x.png" \
+            >/dev/null
+
+          sips \
+            -z 180 180 \
+            "$ICON" \
+            --out "$APP/Icon-60@3x.png" \
+            >/dev/null
+
+          rm -rf \
+            "$APP/_CodeSignature"
+
+          rm -f \
+            "$APP/embedded.mobileprovision"
 
           /usr/bin/zip -qry \
-            FNAFR-3-Mobile-1.4.5-iOS-v1.4-CLEAN-UNSIGNED.ipa \
+            FNAFR-3-Mobile-1.4.5-iOS-v1.5-CLEAN-UNSIGNED.ipa \
             Payload
 
-          ls -lh FNAFR-3-Mobile-1.4.5-iOS-v1.4-CLEAN-UNSIGNED.ipa
+          ls -lh \
+            FNAFR-3-Mobile-1.4.5-iOS-v1.5-CLEAN-UNSIGNED.ipa
 
       - name: Upload Frickbear's 3 Mobile 1.4.5 unsigned IPA
         if: steps.native_build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-1.4.5-iOS-v1.4-CLEAN-UNSIGNED
-          path: FNAFR-3-Mobile-1.4.5-iOS-v1.4-CLEAN-UNSIGNED.ipa
+          name: FNAFR-3-Mobile-1.4.5-iOS-v1.5-CLEAN-UNSIGNED
+          path: FNAFR-3-Mobile-1.4.5-iOS-v1.5-CLEAN-UNSIGNED.ipa
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -1258,7 +1981,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-1.4.5-iOS-v1.4-Diagnostics
+          name: FNAFR-3-Mobile-1.4.5-iOS-v1.5-Diagnostics
           path: output
           if-no-files-found: warn
           compression-level: 6
@@ -1268,12 +1991,16 @@ jobs:
         if: always()
         shell: bash
         run: |
-          echo "Native build outcome: ${{ steps.native_build.outcome }}"
+          echo \
+            "Native build outcome: ${{ steps.native_build.outcome }}"
 
           if [ "${{ steps.native_build.outcome }}" != "success" ]; then
-            echo "1.4.5 v1.4 build failed. Download Diagnostics."
+            echo "1.4.5 v1.5 build failed. Download Diagnostics."
             exit 1
           fi
 
-          test -f FNAFR-3-Mobile-1.4.5-iOS-v1.4-CLEAN-UNSIGNED.ipa
-          echo "SUCCESS: FNAFR-3-Mobile-1.4.5-iOS-v1.4-CLEAN-UNSIGNED.ipa created."
+          test -f \
+            FNAFR-3-Mobile-1.4.5-iOS-v1.5-CLEAN-UNSIGNED.ipa
+
+          echo \
+            "SUCCESS: FNAFR-3-Mobile-1.4.5-iOS-v1.5-CLEAN-UNSIGNED.ipa created."
