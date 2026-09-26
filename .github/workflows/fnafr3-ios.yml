@@ -1,4 +1,4 @@
-name: FNAFR 3 Mobile 1.4.5 iOS - CLEAN PORT v1.2
+name: FNAFR 3 Mobile 1.4.5 iOS - CLEAN PORT v1.3
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Frickbear's 3 Mobile 1.4.5 iOS
+    name: Build Frickbear's 3 Mobile 1.4.5 iOS v1.3
     runs-on: macos-14
     timeout-minutes: 90
 
@@ -58,33 +58,68 @@ jobs:
               for asset in release.get("assets", []):
                   name = asset.get("name", "")
                   lower = name.lower()
+
                   if lower.endswith(".apk") and "1.4.5" in lower:
                       score = 0
+
                       if "frick" in lower:
                           score += 10
+
                       if "fnafr" in lower:
                           score += 5
+
                       if "mobile" in lower:
                           score += 2
-                      matches.append((score, release, asset))
+
+                      matches.append(
+                          (
+                              score,
+                              release,
+                              asset,
+                          )
+                      )
 
           if not matches:
               print("===== RELEASE ASSETS =====")
+
               for release in releases:
                   for asset in release.get("assets", []):
-                      print(release.get("tag_name"), "->", asset.get("name"))
+                      print(
+                          release.get("tag_name"),
+                          "->",
+                          asset.get("name"),
+                      )
+
               raise SystemExit(
                   "ERROR: no APK containing 1.4.5 was found in GitHub Releases"
               )
 
-          matches.sort(key=lambda x: x[0], reverse=True)
+          matches.sort(
+              key=lambda x: x[0],
+              reverse=True,
+          )
+
           _, release, asset = matches[0]
 
-          print("Using release:", release.get("tag_name"))
-          print("Using asset:", asset.get("name"))
-          print("Asset bytes:", asset.get("size"))
+          print(
+              "Using release:",
+              release.get("tag_name"),
+          )
 
-          out = pathlib.Path("work/release/FNAFR3-1.4.5.apk")
+          print(
+              "Using asset:",
+              asset.get("name"),
+          )
+
+          print(
+              "Asset bytes:",
+              asset.get("size"),
+          )
+
+          out = pathlib.Path(
+              "work/release/FNAFR3-1.4.5.apk"
+          )
+
           endpoint = (
               f"repos/{repo}/releases/assets/{asset['id']}"
           )
@@ -92,20 +127,33 @@ jobs:
           with out.open("wb") as fp:
               subprocess.run(
                   [
-                      "gh", "api", endpoint,
-                      "-H", "Accept: application/octet-stream",
+                      "gh",
+                      "api",
+                      endpoint,
+                      "-H",
+                      "Accept: application/octet-stream",
                   ],
                   stdout=fp,
                   check=True,
               )
 
           if out.stat().st_size < 1024 * 1024:
-              raise SystemExit("ERROR: downloaded APK is too small")
+              raise SystemExit(
+                  "ERROR: downloaded APK is too small"
+              )
 
-          print("Downloaded:", out, out.stat().st_size, "bytes")
+          print(
+              "Downloaded:",
+              out,
+              out.stat().st_size,
+              "bytes",
+          )
           PYAPK
 
-          cp work/release/FNAFR3-1.4.5.apk work/FNAFR3.apk
+          cp \
+            work/release/FNAFR3-1.4.5.apk \
+            work/FNAFR3.apk
+
           ls -lh work/FNAFR3.apk
 
       - name: Extract and verify exact 1.4.5 game data
@@ -115,15 +163,26 @@ jobs:
 
           rm -rf work/apk
           mkdir -p work/apk
-          unzip -oq work/FNAFR3.apk -d work/apk
 
-          test -f work/apk/assets/game.droid
+          unzip -oq \
+            work/FNAFR3.apk \
+            -d work/apk
 
-          GAME_SHA="$(shasum -a 256 work/apk/assets/game.droid | awk '{print $1}')"
+          test -f \
+            work/apk/assets/game.droid
+
+          GAME_SHA="$(
+            shasum -a 256 \
+              work/apk/assets/game.droid \
+              | awk '{print $1}'
+          )"
+
           EXPECTED_GAME_SHA="7f800beeb260f1052343065e448755e3eb253c762698f3889de136af8e2537a2"
 
           echo "game.droid SHA256: $GAME_SHA"
-          ls -lh work/apk/assets/game.droid
+
+          ls -lh \
+            work/apk/assets/game.droid
 
           if [ "$GAME_SHA" != "$EXPECTED_GAME_SHA" ]; then
             echo "ERROR: this APK is not the same 1.4.5 Betatest build we checked."
@@ -134,27 +193,71 @@ jobs:
           from pathlib import Path
           import struct
 
-          p = Path("work/apk/assets/game.droid")
+          p = Path(
+              "work/apk/assets/game.droid"
+          )
+
           b = p.read_bytes()
 
-          if not b.startswith(b"FORM") or b[8:12] != b"GEN8":
-              raise SystemExit("ERROR: game.droid is not expected GameMaker FORM/GEN8")
+          if (
+              not b.startswith(b"FORM")
+              or
+              b[8:12] != b"GEN8"
+          ):
+              raise SystemExit(
+                  "ERROR: game.droid is not expected GameMaker FORM/GEN8"
+              )
 
-          tgin = b.find(b"TGIN")
+          tgin = b.find(
+              b"TGIN"
+          )
+
           if tgin < 0:
-              raise SystemExit("ERROR: TGIN chunk not found")
+              raise SystemExit(
+                  "ERROR: TGIN chunk not found"
+              )
 
           pos = tgin + 8
-          version = struct.unpack_from("<I", b, pos)[0]
-          count = struct.unpack_from("<I", b, pos + 4)[0]
 
-          print("FORM/GEN8 OK")
-          print("TGIN version:", version)
-          print("Texture groups:", count)
-          print("game.droid bytes:", len(b))
+          version = struct.unpack_from(
+              "<I",
+              b,
+              pos,
+          )[0]
+
+          count = struct.unpack_from(
+              "<I",
+              b,
+              pos + 4,
+          )[0]
+
+          print(
+              "FORM/GEN8 OK"
+          )
+
+          print(
+              "TGIN version:",
+              version,
+          )
+
+          print(
+              "Texture groups:",
+              count,
+          )
+
+          print(
+              "game.droid bytes:",
+              len(b),
+          )
           PYDATA
 
-          echo "yytex files: $(find work/apk/assets -type f -name '*.yytex' | wc -l | tr -d ' ')"
+          echo "yytex files: $(
+            find work/apk/assets \
+              -type f \
+              -name '*.yytex' \
+              | wc -l \
+              | tr -d ' '
+          )"
 
       - name: Find original launcher icon
         shell: bash
@@ -179,38 +282,87 @@ jobs:
             BEST_AREA=0
 
             while IFS= read -r CANDIDATE; do
-              W="$(sips -g pixelWidth "$CANDIDATE" 2>/dev/null | awk '/pixelWidth:/ {print $2}' || true)"
-              H="$(sips -g pixelHeight "$CANDIDATE" 2>/dev/null | awk '/pixelHeight:/ {print $2}' || true)"
 
-              if [[ "$W" =~ ^[0-9]+$ ]] && [[ "$H" =~ ^[0-9]+$ ]] && [ "$W" -eq "$H" ]; then
+              W="$(
+                sips \
+                  -g pixelWidth \
+                  "$CANDIDATE" \
+                  2>/dev/null \
+                  | awk '/pixelWidth:/ {print $2}' \
+                  || true
+              )"
+
+              H="$(
+                sips \
+                  -g pixelHeight \
+                  "$CANDIDATE" \
+                  2>/dev/null \
+                  | awk '/pixelHeight:/ {print $2}' \
+                  || true
+              )"
+
+              if \
+                [[ "$W" =~ ^[0-9]+$ ]] \
+                && \
+                [[ "$H" =~ ^[0-9]+$ ]] \
+                && \
+                [ "$W" -eq "$H" ]
+              then
+
                 AREA=$((W * H))
+
                 if [ "$AREA" -gt "$BEST_AREA" ]; then
                   BEST_AREA="$AREA"
                   ICON="$CANDIDATE"
                 fi
               fi
+
             done < <(
-              find work/apk/res -type f \
-                \( -iname '*.png' -o -iname '*.webp' -o -iname '*.jpg' -o -iname '*.jpeg' \) \
-                2>/dev/null | sort
+              find work/apk/res \
+                -type f \
+                \( \
+                  -iname '*.png' \
+                  -o \
+                  -iname '*.webp' \
+                  -o \
+                  -iname '*.jpg' \
+                  -o \
+                  -iname '*.jpeg' \
+                \) \
+                2>/dev/null \
+                | sort
             )
           fi
 
-          if [ -z "$ICON" ] || [ ! -f "$ICON" ]; then
+          if \
+            [ -z "$ICON" ] \
+            || \
+            [ ! -f "$ICON" ]
+          then
             echo "ERROR: launcher icon was not found"
             exit 1
           fi
 
-          echo "$ICON" > output/icon-path.txt
+          echo "$ICON" \
+            > output/icon-path.txt
+
           echo "Using icon: $ICON"
+
           file "$ICON"
-          sips -g pixelWidth -g pixelHeight "$ICON" || true
+
+          sips \
+            -g pixelWidth \
+            -g pixelHeight \
+            "$ICON" \
+            || true
 
       - name: Reuse known-good FNAFR iOS runner patches for 1.4.5
         shell: bash
         run: |
           set -euo pipefail
-          source "$RUNNER_TEMP/fnafr145-venv/bin/activate"
+
+          source \
+            "$RUNNER_TEMP/fnafr145-venv/bin/activate"
 
           python3 - <<'PYBUILD'
           import os
@@ -219,20 +371,46 @@ jobs:
 
           import yaml
 
-          TARGET_WORKFLOW_NAME = "FNAFR 3 iOS - v14.6 VERIFIED DIRECT TITLE"
 
-          def run_shell(name, script, check=True):
+          TARGET_WORKFLOW_NAME = (
+              "FNAFR 3 iOS - v14.6 VERIFIED DIRECT TITLE"
+          )
+
+
+          def run_shell(
+              name,
+              script,
+              check=True,
+          ):
               print()
-              print("=" * 76)
-              print("RUNNING:", name)
-              print("=" * 76)
+
+              print(
+                  "=" * 76
+              )
+
+              print(
+                  "RUNNING:",
+                  name,
+              )
+
+              print(
+                  "=" * 76
+              )
 
               result = subprocess.run(
-                  ["/bin/bash", "-c", script],
+                  [
+                      "/bin/bash",
+                      "-c",
+                      script,
+                  ],
                   env=os.environ.copy(),
               )
 
-              if check and result.returncode != 0:
+              if (
+                  check
+                  and
+                  result.returncode != 0
+              ):
                   raise subprocess.CalledProcessError(
                       result.returncode,
                       name,
@@ -257,6 +435,7 @@ jobs:
               checked = set()
 
               for commit in commits:
+
                   try:
                       paths = subprocess.check_output(
                           [
@@ -270,17 +449,31 @@ jobs:
                           text=True,
                           stderr=subprocess.DEVNULL,
                       ).splitlines()
+
                   except subprocess.CalledProcessError:
                       continue
 
                   for path in paths:
-                      if not path.endswith((".yml", ".yaml")):
+
+                      if not path.endswith(
+                          (
+                              ".yml",
+                              ".yaml",
+                          )
+                      ):
                           continue
 
-                      key = (commit, path)
+                      key = (
+                          commit,
+                          path,
+                      )
+
                       if key in checked:
                           continue
-                      checked.add(key)
+
+                      checked.add(
+                          key
+                      )
 
                       try:
                           workflow_text = subprocess.check_output(
@@ -293,110 +486,230 @@ jobs:
                               stderr=subprocess.DEVNULL,
                           )
 
-                          data = yaml.safe_load(workflow_text)
+                          data = yaml.safe_load(
+                              workflow_text
+                          )
+
                       except Exception:
                           continue
 
-                      if not isinstance(data, dict):
+                      if not isinstance(
+                          data,
+                          dict,
+                      ):
                           continue
 
-                      # IMPORTANT:
-                      # Match the parsed workflow NAME exactly.
-                      # Do not search the raw YAML text, because this
-                      # current 1.4.5 workflow itself contains the old
-                      # workflow name inside Python strings and would
-                      # otherwise match itself.
-                      if data.get("name") != TARGET_WORKFLOW_NAME:
+                      if (
+                          data.get("name")
+                          !=
+                          TARGET_WORKFLOW_NAME
+                      ):
                           continue
 
-                      jobs = data.get("jobs")
-                      if not isinstance(jobs, dict):
+                      jobs = data.get(
+                          "jobs"
+                      )
+
+                      if not isinstance(
+                          jobs,
+                          dict,
+                      ):
                           continue
 
                       print()
-                      print("Found exact base workflow:")
-                      print("  commit:", commit)
-                      print("  file:  ", path)
-                      print("  name:  ", data.get("name"))
 
-                      Path("output/base-workflow.txt").write_text(
-                          f"{commit} {path}\n{data.get('name')}\n",
+                      print(
+                          "Found exact base workflow:"
+                      )
+
+                      print(
+                          "  commit:",
+                          commit,
+                      )
+
+                      print(
+                          "  file:  ",
+                          path,
+                      )
+
+                      print(
+                          "  name:  ",
+                          data.get("name"),
+                      )
+
+                      Path(
+                          "output/base-workflow.txt"
+                      ).write_text(
+                          f"{commit} {path}\n"
+                          f"{data.get('name')}\n",
                           encoding="utf-8",
                       )
 
-                      return commit, path, data
+                      return (
+                          commit,
+                          path,
+                          data,
+                      )
 
               raise SystemExit(
                   "ERROR: exact old v14.6 workflow was not found in git history"
               )
 
 
-          base_commit, base_path, base_workflow = find_exact_base_workflow()
+          (
+              base_commit,
+              base_path,
+              base_workflow,
+          ) = find_exact_base_workflow()
+
 
           base_steps = []
 
-          for job_name, job in base_workflow.get("jobs", {}).items():
-              if not isinstance(job, dict):
+          for (
+              job_name,
+              job,
+          ) in base_workflow.get(
+              "jobs",
+              {},
+          ).items():
+
+              if not isinstance(
+                  job,
+                  dict,
+              ):
                   continue
 
-              for step in job.get("steps", []):
-                  if not isinstance(step, dict):
+              for step in job.get(
+                  "steps",
+                  [],
+              ):
+
+                  if not isinstance(
+                      step,
+                      dict,
+                  ):
                       continue
 
-                  script = step.get("run")
+                  script = step.get(
+                      "run"
+                  )
 
-                  if not isinstance(script, str) or not script.strip():
+                  if (
+                      not isinstance(
+                          script,
+                          str,
+                      )
+                      or
+                      not script.strip()
+                  ):
                       continue
 
                   base_steps.append(
                       {
                           "job": job_name,
-                          "name": str(step.get("name", "<unnamed>")),
+                          "name": str(
+                              step.get(
+                                  "name",
+                                  "<unnamed>",
+                              )
+                          ),
                           "script": script,
                       }
                   )
 
-          print("Runnable steps in exact v14.6 base:", len(base_steps))
+
+          print(
+              "Runnable steps in exact v14.6 base:",
+              len(base_steps),
+          )
 
 
-          def find_run(label, *needles):
-              wanted = [needle.lower() for needle in needles]
+          def find_run(
+              label,
+              *needles,
+          ):
+              wanted = [
+                  needle.lower()
+                  for needle
+                  in needles
+              ]
 
               for item in base_steps:
-                  haystack = item["script"].lower()
 
-                  if all(needle in haystack for needle in wanted):
+                  haystack = (
+                      item["script"].lower()
+                  )
+
+                  if all(
+                      needle in haystack
+                      for needle
+                      in wanted
+                  ):
                       print()
-                      print("Found v14.6 reusable step for:", label)
-                      print("  job: ", item["job"])
-                      print("  step:", item["name"])
 
-                      with Path("output/reused-steps.txt").open(
+                      print(
+                          "Found v14.6 reusable step for:",
+                          label,
+                      )
+
+                      print(
+                          "  job: ",
+                          item["job"],
+                      )
+
+                      print(
+                          "  step:",
+                          item["name"],
+                      )
+
+                      with Path(
+                          "output/reused-steps.txt"
+                      ).open(
                           "a",
                           encoding="utf-8",
                       ) as fp:
+
                           fp.write(
-                              f"{label}: {base_commit} {base_path} :: "
+                              f"{label}: "
+                              f"{base_commit} "
+                              f"{base_path} :: "
                               f"{item['name']}\n"
                           )
 
                       return item["script"]
 
               print()
-              print("ERROR: v14.6 reusable step not found:", label)
-              print("Required script markers:")
+
+              print(
+                  "ERROR: v14.6 reusable step not found:",
+                  label,
+              )
+
+              print(
+                  "Required script markers:"
+              )
 
               for needle in needles:
-                  print(" -", needle)
+                  print(
+                      " -",
+                      needle,
+                  )
 
               print()
-              print("Available v14.6 run steps:")
+
+              print(
+                  "Available v14.6 run steps:"
+              )
 
               for item in base_steps:
-                  print(" -", item["name"])
+                  print(
+                      " -",
+                      item["name"],
+                  )
 
               raise SystemExit(
-                  "ERROR: v14.6 build step not found: " + label
+                  "ERROR: v14.6 build step not found: "
+                  + label
               )
 
 
@@ -407,12 +720,14 @@ jobs:
               "release-2.30.12",
           )
 
+
           room_step = find_run(
               "GameMaker 2024.2 ROOM parser",
               "parseROOM(",
               "found2024_2",
               "data_win.c",
           )
+
 
           compat_step = find_run(
               "external textures + VM + GLES",
@@ -421,12 +736,14 @@ jobs:
               "fnafr_external_textures.h",
           )
 
+
           preflight_step = find_run(
               "CLI parser preflight",
               "--print-rooms",
               "build-preflight",
               "BinaryReader: buffer read error",
           )
+
 
           ios_patch_step = find_run(
               "iPhone bundle boot patch",
@@ -435,12 +752,14 @@ jobs:
               "BUTTERSCOTCH_IOS",
           )
 
+
           configure_step = find_run(
               "iOS arm64 configure",
               "-DCMAKE_SYSTEM_NAME=iOS",
               "-DCMAKE_OSX_ARCHITECTURES=arm64",
               "work/build-ios",
           )
+
 
           native_step = find_run(
               "native iPhone build",
@@ -449,12 +768,14 @@ jobs:
               "output/build.log",
           )
 
+
           error_step = find_run(
               "compiler error extraction",
               "error-summary.txt",
               "Undefined symbols",
               "output/build.log",
           )
+
 
           package_step = find_run(
               "unsigned IPA packaging",
@@ -464,113 +785,188 @@ jobs:
           )
 
 
-          # 1) Same pinned runner/SDL that our previous iOS build used.
           run_shell(
               "Clone pinned Butterscotch runner and SDL2",
               clone_step,
           )
 
-          # 2) GameMaker 2024.2 ROOM parser compatibility.
+
           run_shell(
               "Patch GameMaker 2024.2 ROOM parser",
               room_step,
           )
 
-          # 3) External yytex + VM shims + GLES derivative support.
+
           compat = compat_step
 
-          # Fix the natural-number sort typo from the old workflow so
-          # texture_2 is ordered before texture_10.
+
+          compat = compat.replace(
+              'candidates = list(group_dir.glob(f"*{extension}"))',
+              'candidates = [path for path in group_dir.iterdir() '
+              'if path.is_file() and path.suffix.lower() == extension.lower()]',
+          )
+
+
           compat = compat.replace(
               're.split(r"(\\\\d+)", path.name.lower())',
               're.split(r"(\\d+)", path.name.lower())',
           )
 
+
+          compat = compat.replace(
+              'if len(candidates) != page_count:',
+              'if len(candidates) < page_count:',
+          )
+
+
+          compat = compat.replace(
+              'f"{page_count} files, found {len(candidates)}"',
+              'f"at least {page_count} files, found {len(candidates)}"',
+          )
+
+
           compat = compat.replace(
               "FNAFR 3 v14 compatibility",
-              "FNAFR 3 Mobile 1.4.5 compatibility",
+              "FNAFR 3 Mobile 1.4.5 v1.3 compatibility",
           )
+
 
           run_shell(
               "1.4.5 external textures + VM + GLES compatibility",
               compat,
           )
 
-          # 4) Make sure the new game.droid actually parses before iOS build.
+
           preflight = preflight_step
+
           preflight = preflight.replace(
               "output/v14-preflight-",
               "output/1.4.5-preflight-",
           )
-          run_shell("1.4.5 parser preflight", preflight)
 
-          # 5) iOS bundle boot/logging. Do NOT carry the old forced
-          # direct-TitleScreen workaround into this fresh 1.4.5 build.
+
+          run_shell(
+              "1.4.5 parser preflight",
+              preflight,
+          )
+
+
           ios_patch = ios_patch_step
+
+
           ios_patch = ios_patch.replace(
               '                  setenv("FNAFR3_DIRECT_TITLE", "1", 1);\n',
               "",
           )
+
+
           ios_patch = ios_patch.replace(
               "=== FNAFR3 iOS v14 launch ===",
               "=== FNAFR3 Mobile 1.4.5 iOS clean launch ===",
           )
-          run_shell("Patch iPhone bundle boot + runtime log", ios_patch)
 
-          # 6) Configure native arm64 iPhone build.
+
+          run_shell(
+              "Patch iPhone bundle boot + runtime log",
+              ios_patch,
+          )
+
+
           run_shell(
               "Configure iOS arm64 build",
               configure_step,
           )
 
-          # 7) Native build. If it fails, extract the useful compiler errors
-          # before failing this step so Diagnostics still contain them.
+
           native = native_step
-          rc = run_shell("Build Butterscotch for iPhone", native, check=False)
+
+
+          rc = run_shell(
+              "Build Butterscotch for iPhone",
+              native,
+              check=False,
+          )
+
 
           if rc != 0:
+
               try:
                   run_shell(
                       "Extract build errors",
                       error_step,
                       check=False,
                   )
-              finally:
-                  raise SystemExit(f"Native iOS build failed with exit code {rc}")
 
-          # 8) Reuse the known-good IPA packaging, but rename/version it for 1.4.5.
+              finally:
+                  raise SystemExit(
+                      f"Native iOS build failed with exit code {rc}"
+                  )
+
+
           package = package_step
+
+
           package = package.replace(
               "FNAFR-3-Mobile-iOS-v14.6-VERIFIED-DIRECT-TITLE-UNSIGNED.ipa",
-              "FNAFR-3-Mobile-1.4.5-iOS-v1.2-CLEAN-UNSIGNED.ipa",
+              "FNAFR-3-Mobile-1.4.5-iOS-v1.3-CLEAN-UNSIGNED.ipa",
           )
+
+
           package = package.replace(
               "<string>1.2</string>",
               "<string>1.4.5</string>",
           )
+
+
           package = package.replace(
               "<string>14</string>",
-              "<string>14512</string>",
+              "<string>14513</string>",
           )
 
-          run_shell("Package Frickbear's 3 Mobile 1.4.5 IPA", package)
 
-          ipa = Path("FNAFR-3-Mobile-1.4.5-iOS-v1.2-CLEAN-UNSIGNED.ipa")
+          run_shell(
+              "Package Frickbear's 3 Mobile 1.4.5 IPA",
+              package,
+          )
+
+
+          ipa = Path(
+              "FNAFR-3-Mobile-1.4.5-iOS-v1.3-CLEAN-UNSIGNED.ipa"
+          )
+
+
           if not ipa.is_file():
-              raise SystemExit("ERROR: final 1.4.5 IPA was not created")
+              raise SystemExit(
+                  "ERROR: final 1.4.5 IPA was not created"
+              )
+
 
           print()
-          print("=" * 76)
-          print("SUCCESS:", ipa)
-          print(f"Size: {ipa.stat().st_size / 1024 / 1024:.1f} MB")
-          print("=" * 76)
+
+          print(
+              "=" * 76
+          )
+
+          print(
+              "SUCCESS:",
+              ipa,
+          )
+
+          print(
+              f"Size: "
+              f"{ipa.stat().st_size / 1024 / 1024:.1f} MB"
+          )
+
+          print(
+              "=" * 76
+          )
           PYBUILD
 
       - name: Upload Frickbear's 3 Mobile 1.4.5 unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-1.4.5-iOS-v1.2-CLEAN-UNSIGNED
-          path: FNAFR-3-Mobile-1.4.5-iOS-v1.2-CLEAN-UNSIGNED.ipa
+          name: FNAFR-3-Mobile-1.4.5-iOS-v1.3-CLEAN-UNSIGNED
+          path: FNAFR-3-Mobile-1.4.5-iOS-v1.3-CLEAN-UNSIGNED.ipa
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -579,7 +975,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-1.4.5-iOS-v1.1-Diagnostics
+          name: FNAFR-3-Mobile-1.4.5-iOS-v1.3-Diagnostics
           path: output
           if-no-files-found: warn
           compression-level: 6
