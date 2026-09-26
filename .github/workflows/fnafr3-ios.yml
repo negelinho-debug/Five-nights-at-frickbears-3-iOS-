@@ -1,4 +1,4 @@
-name: FNAFR 3 Mobile 1.4.5 iOS - CLEAN PORT v1.1
+name: FNAFR 3 Mobile 1.4.5 iOS - CLEAN PORT v1.2
 
 on:
   workflow_dispatch:
@@ -219,23 +219,52 @@ jobs:
 
           import yaml
 
-          def collect_historical_steps():
+          TARGET_WORKFLOW_NAME = "FNAFR 3 iOS - v14.6 VERIFIED DIRECT TITLE"
+
+          def run_shell(name, script, check=True):
+              print()
+              print("=" * 76)
+              print("RUNNING:", name)
+              print("=" * 76)
+
+              result = subprocess.run(
+                  ["/bin/bash", "-c", script],
+                  env=os.environ.copy(),
+              )
+
+              if check and result.returncode != 0:
+                  raise subprocess.CalledProcessError(
+                      result.returncode,
+                      name,
+                  )
+
+              return result.returncode
+
+
+          def find_exact_base_workflow():
               commits = subprocess.check_output(
                   [
-                      "git", "log", "--all", "--format=%H", "--",
+                      "git",
+                      "log",
+                      "--all",
+                      "--format=%H",
+                      "--",
                       ".github/workflows",
                   ],
                   text=True,
               ).splitlines()
 
-              collected = []
               checked = set()
 
               for commit in commits:
                   try:
                       paths = subprocess.check_output(
                           [
-                              "git", "ls-tree", "-r", "--name-only", commit,
+                              "git",
+                              "ls-tree",
+                              "-r",
+                              "--name-only",
+                              commit,
                               ".github/workflows",
                           ],
                           text=True,
@@ -255,10 +284,15 @@ jobs:
 
                       try:
                           workflow_text = subprocess.check_output(
-                              ["git", "show", f"{commit}:{path}"],
+                              [
+                                  "git",
+                                  "show",
+                                  f"{commit}:{path}",
+                              ],
                               text=True,
                               stderr=subprocess.DEVNULL,
                           )
+
                           data = yaml.safe_load(workflow_text)
                       except Exception:
                           continue
@@ -266,76 +300,103 @@ jobs:
                       if not isinstance(data, dict):
                           continue
 
-                      jobs = data.get("jobs", {})
+                      # IMPORTANT:
+                      # Match the parsed workflow NAME exactly.
+                      # Do not search the raw YAML text, because this
+                      # current 1.4.5 workflow itself contains the old
+                      # workflow name inside Python strings and would
+                      # otherwise match itself.
+                      if data.get("name") != TARGET_WORKFLOW_NAME:
+                          continue
+
+                      jobs = data.get("jobs")
                       if not isinstance(jobs, dict):
                           continue
 
-                      for job_name, job in jobs.items():
-                          if not isinstance(job, dict):
-                              continue
+                      print()
+                      print("Found exact base workflow:")
+                      print("  commit:", commit)
+                      print("  file:  ", path)
+                      print("  name:  ", data.get("name"))
 
-                          steps = job.get("steps", [])
-                          if not isinstance(steps, list):
-                              continue
+                      Path("output/base-workflow.txt").write_text(
+                          f"{commit} {path}\n{data.get('name')}\n",
+                          encoding="utf-8",
+                      )
 
-                          for step in steps:
-                              if not isinstance(step, dict):
-                                  continue
+                      return commit, path, data
 
-                              script = step.get("run")
-                              if not isinstance(script, str) or not script.strip():
-                                  continue
+              raise SystemExit(
+                  "ERROR: exact old v14.6 workflow was not found in git history"
+              )
 
-                              collected.append(
-                                  {
-                                      "commit": commit,
-                                      "path": path,
-                                      "job": job_name,
-                                      "name": str(step.get("name", "<unnamed>")),
-                                      "script": script,
-                                  }
-                              )
 
-              print("Historical runnable steps indexed:", len(collected))
-              if not collected:
-                  raise SystemExit(
-                      "ERROR: no historical GitHub Actions run steps were found"
+          base_commit, base_path, base_workflow = find_exact_base_workflow()
+
+          base_steps = []
+
+          for job_name, job in base_workflow.get("jobs", {}).items():
+              if not isinstance(job, dict):
+                  continue
+
+              for step in job.get("steps", []):
+                  if not isinstance(step, dict):
+                      continue
+
+                  script = step.get("run")
+
+                  if not isinstance(script, str) or not script.strip():
+                      continue
+
+                  base_steps.append(
+                      {
+                          "job": job_name,
+                          "name": str(step.get("name", "<unnamed>")),
+                          "script": script,
+                      }
                   )
-              return collected
 
-
-          history_steps = collect_historical_steps()
+          print("Runnable steps in exact v14.6 base:", len(base_steps))
 
 
           def find_run(label, *needles):
               wanted = [needle.lower() for needle in needles]
 
-              for item in history_steps:
+              for item in base_steps:
                   haystack = item["script"].lower()
+
                   if all(needle in haystack for needle in wanted):
                       print()
-                      print("Found reusable step for:", label)
-                      print("  commit:", item["commit"])
-                      print("  file:  ", item["path"])
-                      print("  step:  ", item["name"])
+                      print("Found v14.6 reusable step for:", label)
+                      print("  job: ", item["job"])
+                      print("  step:", item["name"])
 
-                      Path("output/reused-steps.txt").open(
+                      with Path("output/reused-steps.txt").open(
                           "a",
                           encoding="utf-8",
-                      ).write(
-                          f"{label}: {item['commit']} {item['path']} :: {item['name']}\n"
-                      )
+                      ) as fp:
+                          fp.write(
+                              f"{label}: {base_commit} {base_path} :: "
+                              f"{item['name']}\n"
+                          )
 
                       return item["script"]
 
               print()
-              print("ERROR: reusable historical step not found:", label)
+              print("ERROR: v14.6 reusable step not found:", label)
               print("Required script markers:")
+
               for needle in needles:
                   print(" -", needle)
 
+              print()
+              print("Available v14.6 run steps:")
+
+              for item in base_steps:
+                  print(" -", item["name"])
+
               raise SystemExit(
-                  "ERROR: historical build step not found: " + label
+                  "ERROR: v14.6 build step not found: " + label
               )
 
 
@@ -481,7 +542,7 @@ jobs:
           package = package_step
           package = package.replace(
               "FNAFR-3-Mobile-iOS-v14.6-VERIFIED-DIRECT-TITLE-UNSIGNED.ipa",
-              "FNAFR-3-Mobile-1.4.5-iOS-v1.1-CLEAN-UNSIGNED.ipa",
+              "FNAFR-3-Mobile-1.4.5-iOS-v1.2-CLEAN-UNSIGNED.ipa",
           )
           package = package.replace(
               "<string>1.2</string>",
@@ -489,12 +550,12 @@ jobs:
           )
           package = package.replace(
               "<string>14</string>",
-              "<string>14511</string>",
+              "<string>14512</string>",
           )
 
           run_shell("Package Frickbear's 3 Mobile 1.4.5 IPA", package)
 
-          ipa = Path("FNAFR-3-Mobile-1.4.5-iOS-v1.1-CLEAN-UNSIGNED.ipa")
+          ipa = Path("FNAFR-3-Mobile-1.4.5-iOS-v1.2-CLEAN-UNSIGNED.ipa")
           if not ipa.is_file():
               raise SystemExit("ERROR: final 1.4.5 IPA was not created")
 
@@ -508,8 +569,8 @@ jobs:
       - name: Upload Frickbear's 3 Mobile 1.4.5 unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: FNAFR-3-Mobile-1.4.5-iOS-v1.1-CLEAN-UNSIGNED
-          path: FNAFR-3-Mobile-1.4.5-iOS-v1.1-CLEAN-UNSIGNED.ipa
+          name: FNAFR-3-Mobile-1.4.5-iOS-v1.2-CLEAN-UNSIGNED
+          path: FNAFR-3-Mobile-1.4.5-iOS-v1.2-CLEAN-UNSIGNED.ipa
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
